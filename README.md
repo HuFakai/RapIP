@@ -4,7 +4,35 @@
 
 项目仓库：[HuFakai/RapIP](https://github.com/HuFakai/RapIP)。服务器部署请直接阅读 [实际部署与验收](docs/DEPLOYMENT.md)。
 
-## 本地运行
+## Docker 部署（推荐）
+
+服务器只需 Git、Docker 和 Compose，无需在宿主机安装 Python、Node 或 uv。首次部署：
+
+```sh
+git clone https://github.com/HuFakai/RapIP.git
+cd RapIP
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+
+将 `.env` 中 `RAPIP_ADMIN_PASSWORD`、`RAPIP_SOCKS_PASSWORD`、`RAPIP_ADMIN_TOKEN` 分别改为独立的长随机值，再构建并启动：
+
+```sh
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 gateway
+```
+
+后续更新无需重新复制 `.env`：`git pull --ff-only` 后运行 `docker compose up -d --build`。`cd RapIP` 只是进入 Compose 文件所在目录；Docker 部署无需执行 `python3 scripts/setup.py`。首次账号配置通过管理页面添加即可。
+
+默认管理端口仅绑定服务器本机，远程访问方法见 [部署文档](docs/DEPLOYMENT.md#3-启动服务)。
+
+Node 仅参与构建，生产 Python 容器提供静态页面、API 和两个代理入口。config/data 使用持久目录，停止宽限期为 150 秒；不要同时运行本机进程和容器管理同一数据目录。
+
+三个监听/发布端口及健康检查均由 `.env` 控制：`RAPIP_HTTP_PORT`、`RAPIP_SOCKS_PORT`、`RAPIP_PROXY_HTTP_PORT`。`RAPIP_ADMIN_BIND_IP` 与 `RAPIP_PROXY_BIND_IP` 分别控制 Docker 管理/代理发布地址；公网 NAT 使用 `RAPIP_PUBLIC_PROXY_HOST`、`RAPIP_PUBLIC_SOCKS_PORT`、`RAPIP_PUBLIC_HTTP_PROXY_PORT` 生成正确的客户端链接。修改部署端口后运行 `docker compose up -d --force-recreate`。完整参数、SSH 访问和实测步骤见 [部署文档](docs/DEPLOYMENT.md)。
+
+## 本地开发运行（可选）
 
 需要 Python 3.11+、[uv](https://docs.astral.sh/uv/) 和 Node 22.12+（或兼容 Vite 的更新版本）。
 
@@ -71,20 +99,6 @@ docker compose exec gateway python -m rapip.diagnostics
 ```
 
 该命令只列资源或测活，不建立业务绑定、不调用 Replace API、不改变网关状态。需要额外网络跳转时显式设置 `RAPIP_EGRESS_PROXY`，默认不继承系统代理。Docker 使用单独的 `RAPIP_CONTAINER_EGRESS_PROXY`；容器内的 127.0.0.1 不是宿主机，不应直接复用本机代理地址。
-
-## Docker
-
-本地配置准备完成后：
-
-```sh
-docker compose up --build -d
-docker compose logs -f gateway
-docker compose down
-```
-
-Node 仅参与构建，生产 Python 容器提供静态页面、API 和两个代理入口。config/data 使用持久目录，停止宽限期为 150 秒；不要同时运行本机进程和容器管理同一数据目录。
-
-三个监听/发布端口及健康检查均由 `.env` 控制：`RAPIP_HTTP_PORT`、`RAPIP_SOCKS_PORT`、`RAPIP_PROXY_HTTP_PORT`。`RAPIP_ADMIN_BIND_IP` 与 `RAPIP_PROXY_BIND_IP` 分别控制 Docker 管理/代理发布地址；公网 NAT 使用 `RAPIP_PUBLIC_PROXY_HOST`、`RAPIP_PUBLIC_SOCKS_PORT`、`RAPIP_PUBLIC_HTTP_PROXY_PORT` 生成正确的客户端链接。修改部署端口后运行 `docker compose up -d --force-recreate`。完整参数、SSH 访问和实测步骤见 [部署文档](docs/DEPLOYMENT.md)。
 
 ## 开发与验证
 

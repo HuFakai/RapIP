@@ -4,15 +4,23 @@
 
 ## 1. 准备项目
 
-安装 Git、Python 3（仅用于初始化配置）和带 Compose 插件的 Docker。参见 [Docker 官方安装文档](https://docs.docker.com/engine/install/)。构建容器时会安装 Python 依赖并构建 React 页面，服务器无需额外安装 Node 或 uv。
+服务器只需安装 Git 和带 Compose 插件的 Docker。参见 [Docker 官方安装文档](https://docs.docker.com/engine/install/)。Python、Node 和依赖安装均在镜像构建中完成，宿主机无需安装 Python、Node 或 uv。
 
 ```sh
 git clone https://github.com/HuFakai/RapIP.git
 cd RapIP
-python3 scripts/setup.py
+# 仅首次部署复制；已有 .env 时保留原文件。
+cp .env.example .env
+chmod 600 .env
 ```
 
-初始化生成完整 `.env` 和空账号列表，不覆盖已有配置。管理员密码、代理密码与脚本 Token 各自独立；从服务器 `.env` 查看，不要使用 `.env.example` 中的示例密码。
+`cd RapIP` 只是进入包含 `compose.yaml` 的项目目录。编辑 `.env`，必须将以下三个占位值替换为各自独立的长随机值，然后再启动容器：
+
+- `RAPIP_ADMIN_PASSWORD`：管理页面登录密码。
+- `RAPIP_SOCKS_PASSWORD`：SOCKS5 与 HTTP 入口共用的代理密码。
+- `RAPIP_ADMIN_TOKEN`：脚本调用管理 API 的 Token。
+
+例如运行 `nano .env` 编辑；建议使用至少 32 位随机字母数字。首次无需创建 `accounts.json`，启动后在页面添加账号，服务会创建并保存私有配置。`scripts/setup.py` 是本地开发的可选初始化工具，Docker 部署不需要执行。
 
 ## 2. 配置端口与地址
 
@@ -49,7 +57,7 @@ Compose 会将同一个端口值用于容器监听、宿主机映射及健康检
 
 ```sh
 docker compose config --quiet
-docker compose up --build -d
+docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100 gateway
 ```
@@ -112,7 +120,7 @@ docker compose up -d --force-recreate
 
 ```sh
 git pull --ff-only
-docker compose up --build -d
+docker compose up -d --build
 ```
 
 保留 `.env`、`config/accounts.json`、`config/secrets.json`（存在时）和 `data/`。一致备份时先停止服务，再复制这些私有文件；不要只复制运行中的 SQLite 主文件而遗漏 WAL。停止/重启可能断开长连接，保守退役旧节点后会创建补货任务。
