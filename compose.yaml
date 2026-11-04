@@ -1,0 +1,26 @@
+services:
+  gateway:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RAPIP_HTTP_HOST: 0.0.0.0
+      RAPIP_HTTP_PORT: "${RAPIP_HTTP_PORT:-8080}"
+      RAPIP_SOCKS_HOST: 0.0.0.0
+      RAPIP_SOCKS_PORT: "${RAPIP_SOCKS_PORT:-1080}"
+      RAPIP_PROXY_HTTP_HOST: 0.0.0.0
+      RAPIP_PROXY_HTTP_PORT: "${RAPIP_PROXY_HTTP_PORT:-8888}"
+      RAPIP_EGRESS_PROXY: "${RAPIP_CONTAINER_EGRESS_PROXY:-}"
+    ports:
+      - "${RAPIP_ADMIN_BIND_IP:-${RAPIP_BIND_IP:-127.0.0.1}}:${RAPIP_HTTP_PORT:-8080}:${RAPIP_HTTP_PORT:-8080}"
+      - "${RAPIP_PROXY_BIND_IP:-${RAPIP_BIND_IP:-127.0.0.1}}:${RAPIP_SOCKS_PORT:-1080}:${RAPIP_SOCKS_PORT:-1080}"
+      - "${RAPIP_PROXY_BIND_IP:-${RAPIP_BIND_IP:-127.0.0.1}}:${RAPIP_PROXY_HTTP_PORT:-8888}:${RAPIP_PROXY_HTTP_PORT:-8888}"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    stop_grace_period: 150s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.getenv('RAPIP_HTTP_PORT','8080')+'/api/v1/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

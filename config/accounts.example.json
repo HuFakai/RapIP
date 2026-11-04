@@ -1,0 +1,12 @@
+[
+  {
+    "account_id": "primary",
+    "name": "主账号",
+    "api_key_env": "WEBSHARE_API_KEY",
+    "enabled": true,
+    "replacement_country": "original",
+    "replacement_budget": 2500,
+    "traffic_limit_gb": 250,
+    "plan_id": null
+  }
+]
