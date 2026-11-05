@@ -498,7 +498,7 @@ export function Overview({
                 <span>当前范围暂无待处理异常</span>
               </div>
             )}
-            {d?.events.slice(0, d.alerts.length ? 2 : 5).map((e) => (
+            {d?.events.slice(0, d.alerts.length ? 2 : 3).map((e) => (
               <div className="ops-event" key={e.id}>
                 <Clock3 size={11} />
                 <span>{e.message}</span>

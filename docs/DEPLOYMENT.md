@@ -102,6 +102,7 @@ docker compose up -d --build --wait --wait-timeout 180
 | `RAPIP_PROXY_HTTP_PORT` | HTTP/HTTPS CONNECT 代理入口端口 |
 | `RAPIP_ADMIN_BIND_IP` | 管理端口发布范围，默认 `127.0.0.1` |
 | `RAPIP_PROXY_BIND_IP` | 两个代理端口发布范围，默认 `127.0.0.1` |
+| `RAPIP_PUBLIC_ADMIN_URL` | 正式 HTTPS 管理地址，用于部署信息展示，不改变监听与认证 |
 | `RAPIP_PUBLIC_PROXY_HOST` | 客户端可达的代理 IP/域名，无协议和端口；留空使用页面主机名 |
 | `RAPIP_PUBLIC_SOCKS_PORT` / `RAPIP_PUBLIC_HTTP_PROXY_PORT` | NAT 对外端口与实际监听不同时填写，留空沿用监听端口 |
 | `RAPIP_COOKIE_SECURE` | HTTPS 管理页设 true，HTTP 或 SSH 隧道设 false |

@@ -3529,3 +3529,33 @@ tbody tr:hover {
   max-height: 230px;
   overflow: auto;
 }
+@media (min-width: 951px) {
+  .ops-overview .ops-chart {
+    height: 160px;
+  }
+  .content-compact .page-heading {
+    margin-bottom: 8px;
+  }
+  .content-compact .page-heading h1 {
+    font-size: 23px;
+    margin-top: 3px;
+  }
+  .content-compact .page-heading p {
+    margin-top: 3px;
+  }
+  .content.content-compact {
+    padding-top: 14px;
+  }
+  .ops-overview > .ops-toolbar {
+    padding-top: 7px;
+    padding-bottom: 9px;
+  }
+  .ops-overview .ops-event {
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  .ops-overview .ops-attention {
+    padding-top: 7px;
+    padding-bottom: 4px;
+  }
+}

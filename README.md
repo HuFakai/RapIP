@@ -68,7 +68,7 @@ admin-session-first
 
 ## 管理与额度
 
-- 总览、工位、IP 池、账号、任务/事件、设置共六个模块，页面只读取后端真实状态。
+- 总览、工位、IP 池、质量分组、连接记录、账号、任务/事件、设置共八个模块，页面只读取后端真实状态。
 - 设置中提供冰蓝（默认）、紫罗兰、琥珀、玫瑰四套主题，按浏览器保存；国家旗帜为本地按需加载的 SVG，不依赖外部图片服务。
 - 普通浏览器使用 HttpOnly Cookie、CSRF 与 Origin 检查；脚本使用 `Authorization: Bearer <RAPIP_ADMIN_TOKEN>`。
 - 控制操作必须提供 `Idempotency-Key`，返回 operation_id；结果通过 `/api/v1/operations/{id}` 获取。
