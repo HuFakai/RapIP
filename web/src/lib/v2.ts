@@ -28,6 +28,7 @@ export const basicPolicy: Policy = {
   max_abuse_score: null,
 };
 export interface Group {
+  rotation?: import("@/components/operations/RotationDialog").RotationInfo;
   id: string;
   name: string;
   description: string;

@@ -41,6 +41,7 @@ import {
   refreshAll,
   setCsrf,
   useQuery,
+  type EventData,
   type AccountData,
   type BindingData,
   type Paged,
@@ -48,6 +49,7 @@ import {
   type Stats,
   type TaskData,
 } from "./lib/api";
+import { rotationStates } from "./components/operations/RotationDialog";
 import { quotaPair, trafficPair, packageBytes } from "./lib/quotas";
 import { date, labels } from "./lib/utils";
 import { Button } from "./components/ui/button";
@@ -320,6 +322,11 @@ function BindingsPage({
   const [current, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const history = useQuery<Paged<EventData>>(
+    `/events?binding_id=${expanded ?? "none"}&page_size=20`,
+    !!expanded,
+    5000,
+  );
   const query = useQuery<Paged<BindingData>>(
     `/bindings?page=${current}&page_size=20&q=${encodeURIComponent(search)}&group_id=${encodeURIComponent(group)}`,
   );
@@ -389,7 +396,9 @@ function BindingsPage({
               <div>
                 <Badge state={item.status} />
                 <div className="small muted binding-count">
-                  {item.connections} 条连接 · {item.failovers} 次故障转移
+                  {item.connections} 条连接 ·{" "}
+                  {item.connections === 0 ? "IP 保留中" : "传输中"} ·{" "}
+                  {item.failovers} 次故障转移
                 </div>
               </div>
               <div className="row-actions">
@@ -412,6 +421,14 @@ function BindingsPage({
             </div>
             {expanded === item.id && (
               <div className="binding-detail">
+                <p className="rotation-permanent-note">
+                  {item.unavailable || "绑定长期保留；断连不会释放 IP"} ·{" "}
+                  {rotationStates[item.rotation_status?.status ?? "OFF"] ??
+                    item.rotation_status?.status}{" "}
+                  {item.rotation_status?.next_at
+                    ? `· 下次轮换 ${date(item.rotation_status.next_at)}`
+                    : ""}
+                </p>
                 {item.generations.map((generation) => (
                   <div key={generation.node_id}>
                     <span className="mono">{generation.ip}</span>
@@ -425,8 +442,19 @@ function BindingsPage({
                     )}
                   </div>
                 ))}
+                <div className="binding-timeline">
+                  <strong>绑定事件</strong>
+                  {history.data?.items.map((e) => (
+                    <p key={e.id}>
+                      <time>{date(e.at)}</time> · {e.message}
+                    </p>
+                  ))}
+                  {!history.data?.items.length && (
+                    <p>暂无保留事件，历史日志可能已清理</p>
+                  )}
+                </div>
                 <p className="small muted">
-                  最近流量 {date(item.last_active)} · 创建于{" "}
+                  最近活动 {date(item.last_active)} · 创建于{" "}
                   {date(item.created_at)}
                 </p>
               </div>
@@ -1094,57 +1122,65 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
     },
     {
       key: "max_connections_per_binding",
-      label: "单工位并发连接上限",
-      detail: "每个绑定的 TCP 连接数；压测触及 128 时可按资源情况调到 256",
+      label: "单绑定 TCP 连接上限",
+      detail:
+        "同一绑定所有 TCP 连接的总和，包含排空中的旧连接；不是浏览器数量。超限拒绝新连接，不让 session 失效",
       min: 1,
       max: 100000,
     },
     {
       key: "quality_daily_limit",
       label: "分组每日全局替换预算",
-      detail: "所有非默认资源组共用；0 暂停分组替换",
+      detail:
+        "次/天，所有非默认组共用，并叠加账号及单组限制；包含已预留任务，0 暂停分组替换，默认组不受此项约束",
       min: 0,
       max: 100000,
     },
     {
       key: "max_active_bindings",
-      label: "活跃绑定上限",
-      detail: "0 表示根据资源数量自动计算",
+      label: "最大保留绑定数",
+      detail:
+        "包含无连接但保留 IP 的绑定。0 按受管资源数减备用数计算，不再隐式保留 40%；不会抢占已有绑定",
       min: 0,
       max: 100000,
     },
     {
       key: "pool_wait_timeout",
       label: "热备等待上限",
-      detail: "秒，超时后保留原绑定并失败",
+      detail:
+        "秒，申请或切换时等待符合分组、国家、质量条件的备用 IP；超时保留原绑定并报错，不消耗新 IP",
       min: 0.1,
       max: 30,
     },
     {
       key: "drain_timeout",
       label: "平滑排空上限",
-      detail: "秒，到期后关闭旧代次连接",
+      detail:
+        "秒，平滑换 IP 后旧连接继续运行的最长时间；结束或到期后旧 IP 退役并补货，可能消耗更换额度",
       min: 1,
       max: 3600,
     },
     {
-      key: "session_idle_timeout",
-      label: "会话空闲回收",
-      detail: "秒，仅在没有连接时开始计算",
-      min: 10,
-      max: 86400,
+      key: "min_spare_ips",
+      label: "最少备用 IP 数",
+      detail:
+        "限制新绑定使用的备用余量，默认 0；留 0 个可全部绑定，但换 session 或平滑轮换可能因缺货失败。已有绑定不受挤出",
+      min: 0,
+      max: 100000,
     },
     {
       key: "probe_interval",
       label: "热备巡检间隔",
-      detail: "秒，检查尚未分配的节点",
+      detail:
+        "秒，主动测活开启时检查未使用的候选节点，产生少量代理流量，不回收长期绑定",
       min: 60,
       max: 86400,
     },
     {
       key: "sync_interval",
       label: "账号同步间隔",
-      detail: "秒，核对供应商资源变化",
+      detail:
+        "秒，核对供应商 IP 列表与套餐快照，不代表每次同步都更换 IP；原出口被供应商移除会明确提示",
       min: 30,
       max: 86400,
     },
@@ -1225,10 +1261,14 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
                 <div className="section-heading">
                   <div>
                     <span className="eyebrow">SCHEDULER</span>
-                    <h2>调度策略</h2>
+                    <h2>容量、连接与调试</h2>
                   </div>
                   <span className="small muted">修改后即时生效</span>
                 </div>
+                <p className="rotation-permanent-note">
+                  固定配置长期有效：关闭连接不会释放 IP，session
+                  不因空闲过期。定时轮换与无连接暂停在质量组中独立配置，默认关闭。
+                </p>
                 <form onSubmit={save}>
                   <div className="settings-fields">
                     <div className="setting-row probe-setting">
@@ -1346,28 +1386,61 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
                 </div>
                 <div className="deployment-grid">
                   <div>
+                    <span>服务器公网 IP / 代理主机</span>
+                    <code>
+                      {query.data.deployment.public_proxy_host || "未配置"}
+                    </code>
+                  </div>
+                  <div>
+                    <span>session 生命周期</span>
+                    <strong>
+                      {query.data.deployment.session_expires
+                        ? "按会话策略"
+                        : "长期保留 · 空闲不过期"}
+                    </strong>
+                  </div>
+                  <div>
                     <span>SOCKS5 入口</span>
                     <code>
-                      {query.data.deployment.socks_host}:
-                      {query.data.deployment.socks_port}
+                      {query.data.deployment.public_proxy_host ||
+                        "未配置公网地址"}
+                      :{query.data.deployment.public_socks_port}
                     </code>
                   </div>
                   <div>
                     <span>HTTP 代理入口</span>
                     <code>
-                      {query.data.deployment.proxy_http_host}:
-                      {query.data.deployment.proxy_http_port}
+                      {query.data.deployment.public_proxy_host ||
+                        "未配置公网地址"}
+                      :{query.data.deployment.public_http_proxy_port}
                     </code>
                   </div>
                   <div>
                     <span>长连接无流量超时</span>
-                    <strong>已禁用</strong>
+                    <strong>
+                      {query.data.deployment.tunnel_idle_timeout === 0
+                        ? "已禁用 · 静默 TCP 不因无流量关闭"
+                        : `${query.data.deployment.tunnel_idle_timeout} 秒`}
+                    </strong>
                   </div>
                   <div>
                     <span>同 session 故障转移</span>
-                    <strong>已开启</strong>
+                    <strong>{query.data.deployment.fault_failover}</strong>
                   </div>
                 </div>
+                <details className="quality-advanced">
+                  <summary>高级监听信息</summary>
+                  <p className="field-help">
+                    0.0.0.0
+                    表示监听所有接口，不能用作客户端连接地址。公网端口可通过部署环境变量映射。
+                  </p>
+                  <code>
+                    SOCKS5 {query.data.deployment.socks_host}:
+                    {query.data.deployment.socks_port} · HTTP{" "}
+                    {query.data.deployment.proxy_http_host}:
+                    {query.data.deployment.proxy_http_port}
+                  </code>
+                </details>
               </section>
             )}
           </div>
@@ -1549,7 +1622,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.4</span>
+            <span className="version-tag">v0.2.5</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">

@@ -25,13 +25,18 @@ class HttpProxy(SocksServer):
         task = asyncio.current_task()
         self.handlers.add(task)
         upstream_writer = None
+        dial_binding_id = None
         tunnel_id = None
         replied = False
         observation = self.gateway.observer.begin("http")
         result, reason = "protocol_error", "peer_closed"
         try:
             if len(self.handlers) > self.gateway.settings.max_connections:
-                raise GatewayError("CONNECTION_LIMIT", "连接数超限", 503)
+                raise GatewayError(
+                    "ADMISSION_LIMIT",
+                    f"HTTP 接入处理数 {len(self.handlers)}/{self.gateway.settings.max_connections}",
+                    503,
+                )
             async with asyncio.timeout(15):
                 raw = await reader.readuntil(b"\r\n\r\n")
                 if len(raw) > 32768:
@@ -93,15 +98,21 @@ class HttpProxy(SocksServer):
                 binding, node, generation = await self.gateway.acquire(route)
                 observation.update(account_id=node.account_id, group_id=node.group_id, ip=node.ip)
                 try:
+                    await self.gateway.reserve_dial(binding)
+                    dial_binding_id = binding.id
                     upstream_reader, upstream_writer, _ = await upstream_connect(
                         node, target, egress_proxy=self.gateway.config.egress_proxy
                     )
                     tunnel_id = await self.gateway.attach(
                         binding.id, node.id, generation, writer, upstream_writer, observation=observation
                     )
+                    self.gateway.release_dial(dial_binding_id)
+                    dial_binding_id = None
                     await self.gateway.connection_success(node.id)
                     break
                 except UpstreamError as error:
+                    self.gateway.release_dial(dial_binding_id)
+                    dial_binding_id = None
                     if not await self.gateway.connection_failure(node.id, error.kind) or attempt:
                         raise
             if method == "CONNECT":
@@ -230,6 +241,7 @@ class HttpProxy(SocksServer):
             if not replied:
                 writer.write(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
         finally:
+            self.gateway.release_dial(dial_binding_id)
             await close_writer(upstream_writer)
             await close_writer(writer)
             if tunnel_id:

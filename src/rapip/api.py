@@ -88,7 +88,7 @@ class SettingsPatch(Model):
     pool_wait_timeout: float | None = Field(default=None, ge=0.1, le=30)
     drain_timeout: float | None = Field(default=None, ge=1, le=3600)
     session_switch_mode: Literal["graceful", "hard"] | None = None
-    session_idle_timeout: float | None = Field(default=None, ge=10, le=86400)
+    min_spare_ips: int | None = Field(default=None, ge=0, le=100000)
     max_active_bindings: int | None = Field(default=None, ge=0, le=100000)
     probe_interval: float | None = Field(default=None, ge=60, le=86400)
     probe_timeout: float | None = Field(default=None, ge=1, le=30)
@@ -181,7 +181,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.4", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.5", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -597,12 +597,13 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         return page(sorted(rows, key=lambda item: item["created_at"], reverse=True), *pagination(request))
 
     @app.get(prefix + "/events", dependencies=[Depends(auth)])
-    async def events(request: Request, account_id: str = "", group_id: str = ""):
+    async def events(request: Request, account_id: str = "", group_id: str = "", binding_id: str = ""):
         rows = [
             e
             for e in reversed(gateway.events)
             if (not account_id or e.get("account_id") == account_id)
             and (not group_id or e.get("group_id") == group_id)
+            and (not binding_id or e.get("binding_id") == binding_id)
         ]
         return page(rows, *pagination(request))
 
@@ -644,7 +645,9 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "cookie_secure": config.cookie_secure,
                 "egress_mode": "configured_proxy" if config.egress_proxy else "direct",
                 "tunnel_idle_timeout": 0,
-                "version": "0.2.4",
+                "session_expires": False,
+                "fault_failover": "由质量组决定，默认关闭",
+                "version": "0.2.5",
             },
         }
 

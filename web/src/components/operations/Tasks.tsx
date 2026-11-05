@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, type EventData, type Paged, type TaskData } from "@/lib/api";
-import { queryString } from "@/lib/v2";
+import { Button } from "../ui/button";
+import { operation, queryString } from "@/lib/v2";
 import { labels } from "@/lib/utils";
 import {
   AccountLabel,
@@ -24,6 +25,9 @@ const states: Record<string, string> = {
   BUDGET_BLOCKED: "预算 / 策略阻塞",
 };
 const causes: Record<string, string> = {
+  scheduled: "定时轮换补货",
+  manual_supplier: "手动替换",
+  manual: "主动切换补货",
   quality: "质量拒绝",
   business: "业务补货",
   collision: "冷却碰撞",
@@ -59,6 +63,25 @@ export function Tasks() {
     true,
     4000,
   );
+  const waiting = useQuery<{
+    items: {
+      id: string;
+      ip: string;
+      state: string;
+      error?: string;
+      account_id: string;
+      replacement?: { state: string; error?: string };
+    }[];
+  }>("/replacements/requests", true, 4000);
+  const [cancelError, setCancelError] = useState("");
+  async function cancel(id: string) {
+    try {
+      await operation(`/replacements/requests/${id}/cancel`);
+      await waiting.refresh();
+    } catch (e) {
+      setCancelError((e as Error).message);
+    }
+  }
   const events = useQuery<Paged<EventData>>(
     "/events?" +
       queryString({ account_id: account, group_id: group, page_size: 20 }),
@@ -71,6 +94,43 @@ export function Tasks() {
   };
   return (
     <div className="page-enter">
+      {!!waiting.data?.items.length && (
+        <section className="surface ops-panel replacement-request-panel">
+          <h2>手动更换请求</h2>
+          <p className="field-help">
+            等待断连的任务已预留额度；开始提交后不能取消，结果不明先对账。
+          </p>
+          <ErrorMessage message={cancelError} />
+          {waiting.data.items.slice(0, 20).map((r) => (
+            <div key={r.id} className="replacement-request-row">
+              <b className="mono">{r.ip}</b>
+              <AccountLabel id={r.account_id} />
+              <span>
+                {r.replacement
+                  ? (states[r.replacement.state] ?? r.replacement.state)
+                  : r.state === "WAITING"
+                    ? "等待执行条件"
+                    : r.state === "CANCELLED"
+                      ? "已取消"
+                      : r.state}
+              </span>
+              <small className="ops-warning">
+                {r.replacement?.error || r.error}
+              </small>
+              {r.state === "WAITING" && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void cancel(r.id)}
+                >
+                  取消等待
+                </Button>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
       <div className="surface ops-panel">
         <div className="ops-toolbar">
           <div className="ops-filter-row">

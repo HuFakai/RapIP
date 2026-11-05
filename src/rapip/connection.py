@@ -83,8 +83,11 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 
 会话与换号：
 - 同一 worker + session 的新连接共用出口。不同 worker 相互隔离；匿名 session 以 session 为绑定键。
-- 正常健康且未主动轮换时保持出口。节点故障可自动换 IP，原 session 可重连。
-- 改变 worker 的 session 会申请新 IP，旧 session 立即失效，不要让迟到请求切回旧 ID。
+- 固定模式下，同组同工位同 session 的 IP 长期保留，所有 TCP 断开数小时也不会回收或禁用，不需要保活。服务重启保留绑定和原 IP，但客户端需重建 TCP。
+- 固定模式故障默认保留原 IP 并报错；只有管理员明确开启本组故障自动转移时，故障才允许同 session 换 IP。
+- 同一 worker 改变 session 后缀才主动申请新 IP，成功后旧 session 被替代；无合格库存则原绑定不变。不要让迟到请求切回旧 ID。
+- 匿名 session 是独立绑定；改匿名 session 会新增绑定，不自动清理旧绑定。默认使用稳定 worker。
+- 质量组可以明确开启有限额度的定时轮换，保持整个连接配置和 session 不变。达到无连接暂停时间后只停计划，不释放 IP；重连先用原 IP，再计一个完整周期，不补执行错过的轮换。预算耗尽不能靠重连恢复。
 - 管理页面支持“保留 session 换 IP”，客户端用户名可不变。
 - graceful 让旧 TCP 排空，新连接走新出口；hard 立即关闭旧 TCP，由客户端重连。
 - 没有符合国家条件的热备时，等待最多 {config.settings.pool_wait_timeout:g} 秒后失败；客户端应有界退避，不抢占其他工位。
@@ -105,7 +108,7 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 POST /api/v1/rotate/<worker_id>?group_id={group}，请求头 Idempotency-Key: <UNIQUE_OPERATION_ID>。
 请求体 {{"session_policy":"keep","mode":"graceful"}}，可额外传 expected_generation 防止过期操作。
 返回 202 和 operation id；GET /api/v1/operations/<id> 查询结果。重试同一操作使用同一幂等键；结果未知时先查原操作，禁止换新幂等键重复提交。
-轮换与任务清理可能消耗供应商更换额度，先确认业务已完成及授权范围；读取配置不分配 IP。无热备时保留原绑定并报错；最多有界重试，返回明确错误让调用者决定下一步。
+空闲断连不清理；仅业务明确结束时主动释放。显式轮换与释放可能消耗供应商更换额度，先确认业务已完成及授权范围；读取配置不分配 IP。无热备时保留原绑定并报错；最多有界重试，返回明确错误让调用者决定下一步。
 
 交付要求：
 1. 配置 RAPIP_PROXY_SERVER、RAPIP_PROXY_USERNAME、RAPIP_PROXY_PASSWORD；管理 Token 作为可选独立配置。

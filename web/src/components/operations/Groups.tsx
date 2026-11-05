@@ -1,3 +1,4 @@
+import { RotationDialog } from "./RotationDialog";
 import { useState, type FormEvent } from "react";
 import {
   Check,
@@ -427,10 +428,22 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
       /* notified */
     }
   }
+  const [rotationGroup, setRotationGroup] = useState<Group | null>(null);
   const current = query.data?.items.find((g) => g.id === detail?.id) ?? detail;
   const results = checking?.items as QualityResult[] | undefined;
   return (
     <div className="page-enter">
+      {rotationGroup && (
+        <RotationDialog
+          key={rotationGroup.id}
+          group={
+            query.data?.items.find((g) => g.id === rotationGroup.id) ??
+            rotationGroup
+          }
+          close={() => setRotationGroup(null)}
+          notify={notify}
+        />
+      )}
       <div className="ops-toolbar">
         <p className="ops-summary-text">
           <ShieldCheck size={15} />
@@ -454,7 +467,8 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                 <th>合格 / 总席位</th>
                 <th>质量分布</th>
                 <th>今日替换</th>
-                <th>自动更换</th>
+                <th>质量不合格更换</th>
+                <th>出口模式</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -515,6 +529,20 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                       </span>
                     )}
                     {!g.enabled && <small>分组已暂停</small>}
+                  </td>
+                  <td>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setRotationGroup(g)}
+                    >
+                      {g.rotation?.enabled ? "定时轮换" : "固定 IP"}
+                    </Button>
+                    <small>
+                      {g.rotation?.enabled
+                        ? `今日 ${g.rotation.today_used}/${g.rotation.daily_limit} · 总计 ${g.rotation.total_used}/${g.rotation.total_limit}`
+                        : "断连保留 · 不过期"}
+                    </small>
                   </td>
                   <td>
                     <div className="ops-inline-actions">

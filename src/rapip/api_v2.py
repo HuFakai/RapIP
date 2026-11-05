@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 from .models import GatewayError, IPState, uid
 from .quality import QualityPolicy
 from .quotas import aggregate_usage
+from .rotation import ManualCommit, ManualPreview, RotationPolicy
 
 
 class Model(BaseModel):
@@ -72,6 +73,55 @@ def register(app, gateway, auth, operate):
     g = gateway
     deps = [Depends(auth)]
     prefix = "/api/v1"
+
+    options_cache = {}
+
+    @app.get(prefix + "/accounts/{account_id}/replacement-options", dependencies=deps)
+    async def replacement_options(account_id: str):
+        provider = g.providers.get(account_id)
+        if not provider:
+            raise GatewayError("NOT_FOUND", "账号不存在", 404)
+        old = options_cache.get(account_id)
+        if old and old[0] is provider and old[1] > time.time():
+            return old[2]
+        try:
+            import asyncio
+
+            async with asyncio.timeout(12):
+                result = await provider.replacement_options()
+        except Exception:
+            result = {"error": "库存建议暂不可用；可输入参数后以供应商预检结果为准"}
+        options_cache[account_id] = (provider, time.time() + 60, result)
+        return result
+
+    @app.get(prefix + "/replacements/requests", dependencies=deps)
+    async def replacement_requests():
+        return {"items": g.rotation.public_requests()}
+
+    @app.post(prefix + "/replacements/preview", dependencies=deps)
+    async def replacement_preview(body: ManualPreview, request: Request):
+        return await operate(
+            request, "replacement_preview", body.model_dump(), lambda: g.rotation.preview(body)
+        )
+
+    @app.post(prefix + "/replacements/commit", dependencies=deps)
+    async def replacement_commit(body: ManualCommit, request: Request):
+        return await operate(
+            request, "manual_replacement", body.model_dump(), lambda: g.rotation.commit(body.preview_id)
+        )
+
+    @app.post(prefix + "/replacements/requests/{request_id}/cancel", dependencies=deps)
+    async def cancel_replacement(request_id: str, request: Request):
+        return await operate(request, "replacement_cancel", {}, lambda: g.rotation.cancel(request_id))
+
+    @app.put(prefix + "/groups/{group_id}/rotation", dependencies=deps)
+    async def rotation_policy(group_id: str, body: RotationPolicy, request: Request, reset: bool = False):
+        return await operate(
+            request,
+            "rotation_policy",
+            {**body.model_dump(), "reset": reset},
+            lambda: g.rotation.save(group_id, body, reset),
+        )
 
     @app.get(prefix + "/groups", dependencies=deps)
     async def groups():

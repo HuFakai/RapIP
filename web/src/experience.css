@@ -1123,3 +1123,22 @@ body {
     font-size: 20px;
   }
 }
+
+/* v0.2.5: explicit retained ownership and bounded, opt-in rotation. */
+.rotation-permanent-note { padding: 14px 16px; margin: 0 0 18px; border: 1px solid #8fb9ff38; border-radius: 8px; background: #8fb9ff09; color: var(--text-secondary, #b5c2d5); font-size: 14px; line-height: 1.8; }
+.rotation-mode-options { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.rotation-mode-options button { text-align:left; padding:16px; border:1px solid #ffffff24; border-radius:9px; background:#ffffff05; cursor:pointer; color:inherit; }
+.rotation-mode-options button[aria-pressed=true] { border-color:var(--accent,#8fb9ff); background:#8fb9ff12; }
+.rotation-mode-options strong,.rotation-mode-options span { display:block; }
+.rotation-mode-options strong { font-size:16px; margin-bottom:8px; }
+.rotation-mode-options span { color:var(--text-secondary,#a8b2c0); font-size:14px; line-height:1.7; }
+.rotation-budget-strip { display:flex; flex-wrap:wrap; gap:12px 24px; padding:14px; border-radius:8px; background:#8fb9ff08; border:1px solid #8fb9ff24; font-size:14px; }
+.rotation-budget-strip b { color:var(--accent,#8fb9ff); font-variant-numeric:tabular-nums; }
+.rotation-binding-list>div,.replacement-selection>div,.replacement-request-row { display:flex; align-items:center; flex-wrap:wrap; gap:10px 18px; padding:12px 0; border-bottom:1px solid #ffffff12; font-size:14px; }
+.rotation-binding-list small { flex-basis:100%; }
+.replacement-selection { max-height:200px; overflow:auto; }
+.replacement-selection>div { padding:12px; background:#ffffff03; }
+.replacement-preview { padding:16px; border:1px solid #6cd7dd45; background:#6cd7dd09; border-radius:8px; font-size:14px; line-height:1.7; }
+.replacement-preview b { color:#6cd7dd; }.replacement-preview p { margin:7px 0 0; }
+.replacement-request-panel { margin-bottom:18px; padding:18px; }.replacement-request-panel h2 { font-size:17px; }
+@media(max-width:600px) { .rotation-mode-options { grid-template-columns:1fr; }.rotation-budget-strip { gap:10px; }.rotation-budget-strip>span { flex-basis:100%; } }

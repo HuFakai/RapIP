@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useQuery, type NodeData, type Paged } from "@/lib/api";
 import { operation, queryString } from "@/lib/v2";
+import { ReplacementDialog } from "./ReplacementDialog";
 import { IPQualityDialog } from "./IPQualityDialog";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
@@ -47,6 +48,8 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
     [selected, setSelected] = useState<NodeData | null>(null),
     [busy, setBusy] = useState(""),
     [reportNode, setReportNode] = useState<NodeData | null>(null);
+  const [checked, setChecked] = useState<NodeData[]>([]);
+  const [replacing, setReplacing] = useState<NodeData[] | null>(null);
   const [visible, setVisible] = useState<string[]>(() => {
     try {
       const parsed = JSON.parse(
@@ -136,6 +139,13 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
     query.data?.items.find((n) => n.id === selected?.id) ?? selected;
   return (
     <div className="surface ops-panel page-enter">
+      {replacing && (
+        <ReplacementDialog
+          nodes={replacing}
+          close={() => setReplacing(null)}
+          notify={notify}
+        />
+      )}
       <form
         className="ops-toolbar"
         onSubmit={(e) => {
@@ -207,6 +217,25 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
           </Button>
         </div>
         <div className="ops-filter-row">
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            disabled={!checked.length}
+            onClick={() => setReplacing(checked)}
+          >
+            更换已选 IP（{checked.length}）
+          </Button>
+          {!!checked.length && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setChecked([])}
+            >
+              清空选择
+            </Button>
+          )}
           <details className="ops-column-picker">
             <summary>
               <SlidersHorizontal size={13} />
@@ -233,6 +262,34 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
         <table className="ops-table ops-node-table">
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  aria-label="选择本页 IP"
+                  checked={
+                    !!query.data?.items.length &&
+                    query.data.items.every((n) =>
+                      checked.some((c) => c.id === n.id),
+                    )
+                  }
+                  onChange={(e) =>
+                    setChecked(
+                      e.target.checked
+                        ? [
+                            ...checked.filter(
+                              (n) =>
+                                !query.data?.items.some((c) => c.id === n.id),
+                            ),
+                            ...(query.data?.items ?? []),
+                          ]
+                        : checked.filter(
+                            (n) =>
+                              !query.data?.items.some((c) => c.id === n.id),
+                          ),
+                    )
+                  }
+                />
+              </th>
               <th>
                 <button onClick={() => sorting("ip")}>
                   出口 IP <ArrowUpDown size={11} />
@@ -270,6 +327,20 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
           <tbody>
             {query.data?.items.map((n) => (
               <tr key={n.id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`选择 IP ${n.ip}`}
+                    checked={checked.some((c) => c.id === n.id)}
+                    onChange={(e) =>
+                      setChecked(
+                        e.target.checked
+                          ? [...checked, n]
+                          : checked.filter((c) => c.id !== n.id),
+                      )
+                    }
+                  />
+                </td>
                 <td>
                   <button
                     className="ops-link mono"
@@ -325,6 +396,13 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                 )}
                 <td>
                   <div className="ops-inline-actions">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setReplacing([n])}
+                    >
+                      更换 IP
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

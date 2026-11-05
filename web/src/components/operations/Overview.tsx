@@ -90,9 +90,9 @@ export function Overview({
       filters: {},
     },
     {
-      name: "活跃会话",
+      name: "保留会话",
       value: s?.active_bindings,
-      detail: `当前容量 ${s?.binding_limit ?? "—"} · 等待 ${s?.waiters ?? "—"}`,
+      detail: `空闲保留 ${s?.retained_bindings ?? "—"} · 容量 ${s?.binding_limit ?? "—"} · 等待 ${s?.waiters ?? "—"}`,
       icon: Users,
       page: "bindings",
       filters: {},

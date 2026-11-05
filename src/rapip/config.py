@@ -41,7 +41,6 @@ class Settings:
     pool_wait_timeout: float = 5
     session_switch_mode: str = "graceful"
     drain_timeout: float = 120
-    session_idle_timeout: float = 300
     blacklist_ttl: float = 21600
     retired_session_ttl: float = 86400
     probe_interval: float = 900
@@ -54,7 +53,8 @@ class Settings:
     max_connections: int = 1024
     max_connections_per_binding: int = 128
     max_waiters: int = 128
-    auto_failover: bool = True
+    min_spare_ips: int = 0
+    auto_failover: bool = False
 
     def public(self) -> dict:
         return asdict(self)

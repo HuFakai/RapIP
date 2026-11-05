@@ -35,6 +35,13 @@ export function trafficScale(values: (number | null)[], rate = false) {
   };
 }
 export const labels: Record<string, string> = {
+  RETAINED: "空闲保留",
+  UNAVAILABLE: "原出口不可用",
+  CANCELLED: "已取消",
+  rotation_policy: "出口轮换策略",
+  replacement_preview: "供应商替换预检",
+  manual_replacement: "手动更换 IP",
+  replacement_cancel: "取消等待替换",
   account_usage_sync: "同步套餐用量",
   account_delete: "移除上游账号",
   group_create: "创建资源组",

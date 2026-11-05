@@ -49,6 +49,7 @@ async def test_same_session_concurrent_requests_share_one_ip(gateway):
 
 
 async def test_different_workers_never_share_ip(gateway):
+    gateway.settings.max_active_bindings = 3
     results = await asyncio.gather(*(gateway.acquire(route(str(i))) for i in range(3)))
     assert len({node.ip for _, node, _ in results}) == 3
     with pytest.raises(GatewayError):
@@ -100,6 +101,7 @@ async def test_anonymous_session_is_sticky(gateway):
 
 
 async def test_fault_preserves_session_and_changes_ip(gateway):
+    gateway.rotation.policies["default"] = {**gateway.rotation.policy("default"), "fault_failover": True}
     binding, old, _ = await gateway.acquire(route())
     assert not await gateway.connection_failure(old.id, "transport")
     assert await gateway.connection_failure(old.id, "transport")
@@ -195,7 +197,7 @@ async def test_hard_rotation_closes_old_connection(gateway):
     await gateway.detach(tunnel)
 
 
-async def test_restart_retires_used_node_and_preserves_logical_session(gateway):
+async def test_restart_preserves_used_node_and_logical_session(gateway):
     binding, old, _ = await gateway.acquire(route())
     async with gateway.lock:
         await gateway._persist()
@@ -217,9 +219,10 @@ async def test_restart_retires_used_node_and_preserves_logical_session(gateway):
     recovered = Gateway(config, provider_factory=gateway.provider_factory, probe=gateway.probe)
     await recovered.start(background=False, sync=False)
     try:
-        assert recovered.nodes[old.id].state == IPState.REPLACING
+        assert recovered.nodes[old.id].state == IPState.IN_USE
         assert recovered.bindings[binding.id].session == "aaa"
-        assert recovered.bindings[binding.id].node_id is None
+        assert recovered.bindings[binding.id].node_id == old.id
+        assert not recovered.replacements
     finally:
         await recovered.stop()
 

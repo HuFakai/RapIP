@@ -6,6 +6,11 @@ import { Button } from "../ui/button";
 import { date } from "@/lib/utils";
 
 const text: Record<string, string> = {
+  BINDING_CONNECTION_LIMIT: "单绑定连接已满",
+  GATEWAY_CONNECTION_LIMIT: "网关连接已满",
+  ADMISSION_LIMIT: "接入处理已满",
+  SESSION_RETIRED: "session 已被替代或释放",
+  EXIT_UNAVAILABLE: "原出口不可用",
   CONNECTION_LIMIT: "并发连接已达上限",
   unsupported_command: "不支持 UDP / 该命令",
   upstream_command: "不支持 UDP / 该命令（旧记录）",
@@ -34,7 +39,7 @@ const text: Record<string, string> = {
 export function Status({ state }: { state: string }) {
   return (
     <span
-      className={`ops-status tone-${["healthy", "PASS", "success"].includes(state) ? "good" : ["FAIL", "ERROR", "upstream_transport", "upstream_target", "authentication_rejected", "upstream_authentication", "protocol_error"].includes(state) ? "bad" : ["UNKNOWN", "EXPIRED", "QUARANTINED", "POOL_EXHAUSTED", "DRAINING", "CONNECTION_LIMIT", "unsupported_command", "upstream_command"].includes(state) ? "warn" : ["IN_USE", "REPLACING"].includes(state) ? "active" : state === "FRESH" || state === "BASIC" ? "ready" : "neutral"}`}
+      className={`ops-status tone-${["healthy", "PASS", "success"].includes(state) ? "good" : ["FAIL", "ERROR", "upstream_transport", "upstream_target", "authentication_rejected", "upstream_authentication", "protocol_error"].includes(state) ? "bad" : ["BINDING_CONNECTION_LIMIT", "GATEWAY_CONNECTION_LIMIT", "ADMISSION_LIMIT", "SESSION_RETIRED", "EXIT_UNAVAILABLE", "UNKNOWN", "EXPIRED", "QUARANTINED", "POOL_EXHAUSTED", "DRAINING", "CONNECTION_LIMIT", "unsupported_command", "upstream_command"].includes(state) ? "warn" : ["IN_USE", "REPLACING"].includes(state) ? "active" : state === "FRESH" || state === "BASIC" ? "ready" : "neutral"}`}
     >
       {text[state] || state}
     </span>

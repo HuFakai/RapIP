@@ -155,6 +155,7 @@ export interface Paged<T> {
   page_size: number;
 }
 export interface NodeData {
+  binding_id?: string | null;
   group_id: string;
   slot_id: string;
   used: boolean;
@@ -182,6 +183,8 @@ export interface Generation {
   drain_until: number | null;
 }
 export interface BindingData {
+  unavailable?: string;
+  rotation_status?: { status: string; next_at?: number; error?: string };
   group_id: string;
   policy_version: number;
   id: string;
@@ -207,6 +210,7 @@ export interface Stats {
   replacing_count: number;
   blacklist_count: number;
   active_bindings: number;
+  retained_bindings: number;
   active_connections: number;
   binding_limit: number;
   waiters: number;
@@ -261,6 +265,9 @@ export interface SettingsData {
     public_proxy_host: string;
     public_socks_port: number;
     public_http_proxy_port: number;
+    tunnel_idle_timeout: number;
+    session_expires: boolean;
+    fault_failover: string;
     version: string;
   };
 }

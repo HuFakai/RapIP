@@ -94,17 +94,31 @@ class Webshare:
             if country == "any"
             else {"type": "country", "country_code": country, "count": 1}
         )
-        data = await self.request(
+        data = await self.replace_selected(ip, selection)
+        return str(data["id"])
+
+    async def replace_selected(self, ip, selection, dry_run=False):
+        return await self.request(
             "POST",
             "/api/v3/proxy/replace/",
             params=self.plan(),
             json={
                 "to_replace": {"type": "ip_address", "ip_addresses": [ip]},
                 "replace_with": [selection],
-                "dry_run": False,
+                "dry_run": dry_run,
             },
         )
-        return str(data["id"])
+
+    async def replacement_options(self):
+        plan_id = self.account.plan_id
+        if not plan_id:
+            subscription = await self.request("GET", "/api/v2/subscription/")
+            plan_id = subscription["plan"]
+        data = await self.request("GET", "/api/v3/proxy/list/stats", params={"plan_id": plan_id})
+        return {
+            key: data.get(key, {})
+            for key in ("available_countries", "available_asns", "available_ip_ranges_24")
+        }
 
     async def replacement(self, job_id: str) -> dict:
         return await self.request("GET", f"/api/v3/proxy/replace/{job_id}/", params=self.plan())

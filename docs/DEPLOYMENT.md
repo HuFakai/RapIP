@@ -196,3 +196,10 @@ docker compose exec gateway python -m rapip.diagnostics
 仍使用相同的 Docker Compose 更新方式，保留 `.env`、`config/`、`data/`。新版本首次读取旧快照时自动采用默认生命周期策略，无需手动迁移数据库。更新前备份配置、数据并确认没有活动业务连接；更新会重建网关容器。
 
 新设置位于“网关设置 → 数据生命周期”，不是环境变量。代理/管理端口仍由现有 `.env` 控制。分组 ID 可以由后端自动生成，AI 接入说明从“连接配置”重新复制即可获取最新版。
+
+
+## v0.2.5 生命周期与更新
+
+当前有效 session 与原 IP 长期保留。更新、重启导致 TCP 断开，但不再退役当前 IN_USE 节点或设置 300 秒重连期限。无连接时可以备份/更新并保留绑定，不必等待绑定数为 0；正在排空的旧代次和已提交 Replace 仍需完成对账。实际入口取 RAPIP_PUBLIC_PROXY_HOST / RAPIP_PUBLIC_SOCKS_PORT / RAPIP_PUBLIC_HTTP_PROXY_PORT，0.0.0.0 仅是监听地址。
+
+本版持久化 schema 3，包含轮换授权、额度预留与手动等待任务。回退须停服务并同时恢复发布前数据库、配置和旧镜像，不能只换旧代码。定时轮换升级后全部默认关闭；session_idle_timeout 的旧值被忽略，不迁移为轮换授权。

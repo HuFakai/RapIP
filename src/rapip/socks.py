@@ -162,6 +162,7 @@ class SocksServer:
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         task = asyncio.current_task()
         self.handlers.add(task)
+        dial_binding_id = None
         tunnel_id = None
         upstream_writer = None
         replied = False
@@ -170,7 +171,11 @@ class SocksServer:
         result, reason = "protocol_error", "peer_closed"
         try:
             if len(self.handlers) > self.gateway.settings.max_connections:
-                return
+                raise GatewayError(
+                    "ADMISSION_LIMIT",
+                    f"SOCKS5 接入处理数 {len(self.handlers)}/{self.gateway.settings.max_connections}",
+                    503,
+                )
             sock = writer.get_extra_info("socket")
             if sock:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -217,15 +222,21 @@ class SocksServer:
                 binding, node, generation = await self.gateway.acquire(route)
                 observation.update(account_id=node.account_id, group_id=node.group_id, ip=node.ip)
                 try:
+                    await self.gateway.reserve_dial(binding)
+                    dial_binding_id = binding.id
                     upstream_reader, upstream_writer, reply = await upstream_connect(
                         node, target, egress_proxy=self.gateway.config.egress_proxy
                     )
                     tunnel_id = await self.gateway.attach(
                         binding.id, node.id, generation, writer, upstream_writer, observation=observation
                     )
+                    self.gateway.release_dial(dial_binding_id)
+                    dial_binding_id = None
                     await self.gateway.connection_success(node.id)
                     break
                 except UpstreamError as error:
+                    self.gateway.release_dial(dial_binding_id)
+                    dial_binding_id = None
                     moved = await self.gateway.connection_failure(node.id, error.kind)
                     if attempt or not moved:
                         raise
@@ -269,6 +280,7 @@ class SocksServer:
         except (Exception, asyncio.CancelledError):
             reason = "interrupted" if self.gateway.stopping else "io_error"
         finally:
+            self.gateway.release_dial(dial_binding_id)
             await close_writer(upstream_writer)
             await close_writer(writer)
             if tunnel_id:

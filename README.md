@@ -1,6 +1,6 @@
 # RapIP
 
-当前版本：**v0.2.4**。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
+当前版本：**v0.2.5**。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
 
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 
@@ -24,7 +24,7 @@ bash scripts/deploy.sh
 bash scripts/deploy.sh
 ```
 
-已有 `.env` 时保留密码、端口、账号和数据，自动拉取源码后重新构建并重建容器。只使用本地源码、不拉取时运行 `bash scripts/deploy.sh --no-pull`。更新会断开已有长连接，恢复时可能按规则创建补货任务。
+已有 `.env` 时保留密码、端口、账号和数据，自动拉取源码后重新构建并重建容器。只使用本地源码、不拉取时运行 `bash scripts/deploy.sh --no-pull`。更新会断开已有长连接，客户端需重连；v0.2.5 保留当前 session 与原 IP，不因重启或空闲创建替换，已有在途及排空任务仍按原规则完成。
 
 默认只发布到服务器本机，使用输出的 SSH 命令访问；脚本不自动开放防火墙。三个端口通过 `RAPIP_HTTP_PORT`、`RAPIP_SOCKS_PORT`、`RAPIP_PROXY_HTTP_PORT` 配置，`.env.example` 与新生成 `.env` 均有逐项中文说明。终端生成 32 位随机字母数字可用 `openssl rand -hex 16`。手工部署、远程直连、备份及实测步骤见 [部署文档](docs/DEPLOYMENT.md)。
 
@@ -137,3 +137,5 @@ npm run build
 - v0.2.3：设置页内标签、账号编辑与受控本地移除，以及可解释家宽场景评分和类型判定，详见 [更新与评分规则](docs/RELEASE_V0.2.3.md)。
 
 - v0.2.4：账号 ID 自动生成、选填备注与名称显示、可见操作按钮、Webshare 真实套餐额度/流量同步及首页全账号汇总。[使用与数据口径](docs/RELEASE_V0.2.4.md)。
+
+- v0.2.5：长期固定绑定、取消空闲回收、重启保留 IP；质量组有预算的定时轮换、资源池手动参数替换与预检、连接错误细分和真实运行入口。[使用与迁移](docs/RELEASE_V0.2.5.md)。

@@ -250,11 +250,12 @@ class QualityManager:
                     "today_submitted": sum(x["day"] == self.day() for x in used),
                     "round_submitted": sum(x["round_id"] == group["round_id"] for x in used),
                     "running": group["id"] in self.running,
+                    "rotation": self.g.rotation.public(group["id"]),
                 }
             )
         return rows
 
-    def validate_members(self, ids):
+    def validate_members(self, ids, allow_reserved=False):
         if len(ids) != len(set(ids)):
             raise GatewayError("DUPLICATE_MEMBERS", "成员列表不能重复", 422)
         result = []
@@ -264,10 +265,14 @@ class QualityManager:
                 not node
                 or node.state not in {IPState.FRESH, IPState.QUARANTINED}
                 or node.used
-                or node.binding_id
+                or (node.binding_id and not allow_reserved)
             ):
                 raise GatewayError("MEMBER_BUSY", "只能选择未使用、无绑定和无在途替换的资源")
-            if node.id in self.busy or node.id in self.g.probing:
+            if (
+                node.id in self.busy
+                or node.id in self.g.probing
+                or any(r["node_id"] == node.id for r in self.g.rotation.pending())
+            ):
                 raise GatewayError("MEMBER_BUSY", "资源正在检测，请稍后再操作")
             if any(
                 j.node_id == id and j.state not in {"COMPLETED", "FAILED"}
@@ -350,6 +355,8 @@ class QualityManager:
             self.g._writable()
             if id == "default" or id not in self.groups:
                 raise GatewayError("GROUP_CONFLICT", "默认组不能删除或分组不存在")
+            if self.g.rotation.pending(group=id):
+                raise GatewayError("GROUP_BUSY", "分组仍有预留替换任务，请先取消或完成")
             if id in self.running or any(
                 not b.released and b.group_id == id for b in self.g.bindings.values()
             ):
@@ -564,7 +571,7 @@ class QualityManager:
             async with self.g.changed:
                 self.g._writable()
                 if node_ids is not None:
-                    nodes = self.validate_members(node_ids)
+                    nodes = self.validate_members(node_ids, allow_reserved=not preview)
                     if not preview and any(n.group_id != group_id for n in nodes):
                         raise GatewayError("GROUP_CONFLICT", "只能检测该组成员")
                 else:
@@ -638,11 +645,13 @@ class QualityManager:
                         node.state, node.reason = IPState.FRESH, "本组质量准入通过"
                         node.last_success_at = time.time()
                         self.slots[node.slot_id]["streak"] = 0
+                        self.g.rotation.restore(node)
                     else:
                         node.state = IPState.QUARANTINED
                         node.reason = "；".join(verdict["reasons"]) or "冷却或重复资源"
                         if (
                             verdict["state"] == "FAIL"
+                            and not node.binding_id
                             and group["auto_replace"]
                             and any_network_success
                             and allow_replace
@@ -673,7 +682,7 @@ class QualityManager:
             if "nodes" in locals():
                 self.busy.difference_update(n.id for n in nodes)
 
-    def budget_reason(self, node, job=None):
+    def budget_reason(self, node, job=None, reservation_id=""):
         if node.group_id == "default":
             return None
         group, slot = self.groups.get(node.group_id), self.slots.get(node.slot_id)
@@ -685,11 +694,19 @@ class QualityManager:
             return "质量自动更换已关闭"
         day = self.day()
         history = [x for x in self.ledger if x["group_id"] == node.group_id]
-        if sum(x["day"] == day for x in self.ledger) >= self.global_daily_limit:
+        pending = self.g.rotation.pending(exclude=reservation_id)
+        group_pending = [r for r in pending if r["group_id"] == node.group_id]
+        if (
+            sum(x["day"] == day for x in self.ledger) + sum(r["group_id"] != "default" for r in pending)
+            >= self.global_daily_limit
+        ):
             return "全局每日替换预算已用尽"
-        if sum(x["day"] == day for x in history) >= group["daily_limit"]:
+        if sum(x["day"] == day for x in history) + len(group_pending) >= group["daily_limit"]:
             return "分组每日替换预算已用尽"
-        if sum(x["round_id"] == group["round_id"] for x in history) >= group["round_limit"]:
+        if (
+            sum(x["round_id"] == group["round_id"] for x in history) + len(group_pending)
+            >= group["round_limit"]
+        ):
             return "本轮替换预算已用尽"
         if slot["streak"] >= group["slot_limit"]:
             return "该席位连续替换上限，需检查策略或资源来源"

@@ -111,6 +111,10 @@ class Binding:
     last_detached: float = field(default_factory=time.time)
     released: bool = False
     failovers: int = 0
+    unavailable: str = ""
+    released_at: float | None = None
+    release_reason: str = ""
+    rotation: dict = field(default_factory=dict)
     group_id: str = "default"
     policy_version: int = 0
 
@@ -133,6 +137,10 @@ class Replacement:
     group_id: str = "default"
     slot_id: str = ""
     cause: str = "business"
+    selection: dict | None = None
+    reservation_id: str = ""
+    rebind_id: str = ""
+    new_ip: str = ""
 
 
 @dataclass

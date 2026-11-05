@@ -61,6 +61,18 @@ class Provider:
         row["id"] = str(self.counter + 100)
         return str(self.counter)
 
+    async def replacement_options(self):
+        return {
+            "available_countries": {"US": 80, "GB": 20},
+            "available_asns": {"2914": ["模拟运营商", 10]},
+            "available_ip_ranges_24": {"198.51.100.0/24": 10},
+        }
+
+    async def replace_selected(self, ip, selection, dry_run=False):
+        if dry_run:
+            return {"id": "preview", "state": "validated", "proxies_added": 1, "proxies_removed": 1}
+        return {"id": await self.replace(ip, selection)}
+
     async def replacement(self, job_id):
         return {"state": "completed", "proxies_added": 1, "proxies_removed": 1}
 
@@ -75,6 +87,7 @@ def main():
             socks_password="qa-proxy-password",
             admin_token="qa-script-token",
             http_port=18081,
+            public_proxy_host="192.0.2.10",
         )
         config.config_dir.mkdir()
         (config.config_dir / "accounts.json").write_text(
