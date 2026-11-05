@@ -4,7 +4,7 @@
 
 业务规则以 [SPEC.md](../SPEC.md) 为准，架构见 [技术方案](TECHNICAL_DESIGN.md)。首版实现与验证情况见 README.md。
 
-下一版的紧凑总览、历史指标、节点检索、连接记录和质量分组提案见 [v0.2 升级计划](V0.2_UPGRADE_PLAN.md)，分组规则详见 [IP 质量分组方案](IP_QUALITY_GROUPS_PLAN.md)。这些是待实施规划，不代表当前页面已提供质量筛查与自动换号。
+下一版的紧凑总览、历史指标、节点检索、连接记录和质量分组提案见 [v0.2 升级计划](V0.2_UPGRADE_PLAN.md)，分组规则详见 [IP 质量分组方案](IP_QUALITY_GROUPS_PLAN.md)。这些功能已随 v0.2 实现，新增质量分组和连接记录入口；当前交付与验证范围见 [发布说明](RELEASE_V0.2.md)。
 
 ## 1. 页面目标
 

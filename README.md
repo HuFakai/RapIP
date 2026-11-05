@@ -1,5 +1,7 @@
 # RapIP
 
+当前版本：**v0.2.0**。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
+
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 
 项目仓库：[HuFakai/RapIP](https://github.com/HuFakai/RapIP)。服务器部署请直接阅读 [实际部署与验收](docs/DEPLOYMENT.md)。
@@ -114,8 +116,8 @@ npm run build
 
 ## 文档
 
-- [v0.2 升级计划：紧凑总览、运行观测与质量分组（待讨论）](docs/V0.2_UPGRADE_PLAN.md)
-- [IP 质量分组与自动准入方案（规划）](docs/IP_QUALITY_GROUPS_PLAN.md)
+- [v0.2 升级计划：紧凑总览、运行观测与质量分组](docs/V0.2_UPGRADE_PLAN.md)
+- [IP 质量分组与自动准入方案](docs/IP_QUALITY_GROUPS_PLAN.md)
 - [项目规范](SPEC.md)
 - [技术方案](docs/TECHNICAL_DESIGN.md)
 - [管理页面](docs/ADMIN_UI_SPEC.md)

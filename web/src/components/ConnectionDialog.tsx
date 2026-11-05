@@ -7,8 +7,9 @@ import {
   RefreshCw,
   Terminal,
 } from "lucide-react";
-import { api, type SettingsData } from "@/lib/api";
+import { api, useQuery, type SettingsData } from "@/lib/api";
 import { copyText, randomId } from "@/lib/browser";
+import type { Group } from "@/lib/v2";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 
@@ -19,6 +20,10 @@ interface ConnectionData {
   http_port: number;
   links: { socks5: string; socks5h: string; http: string };
   ai_guide: string;
+  structured: {
+    http: { server: string; username: string; password: string };
+    socks5: { server: string; username: string; password: string };
+  };
 }
 
 function CopyField({
@@ -61,6 +66,9 @@ export function ConnectionDialog({
   settings?: SettingsData;
   notify: (text: string) => void;
 }) {
+  const [group, setGroup] = useState("default");
+  const [mode, setMode] = useState<"direct" | "tunnel">("direct");
+  const groups = useQuery<{ items: Group[] }>("/groups", open, 15000);
   const [worker, setWorker] = useState("01");
   const [session, setSession] = useState(() =>
     randomId().replaceAll("-", "").slice(0, 10),
@@ -69,7 +77,9 @@ export function ConnectionDialog({
   const [hostOverride, setHostOverride] = useState<string | null>(null);
   const host =
     hostOverride ??
-    (settings?.deployment.public_proxy_host || window.location.hostname);
+    (mode === "tunnel"
+      ? "127.0.0.1"
+      : settings?.deployment.public_proxy_host || window.location.hostname);
   const effectiveHost = host || window.location.hostname;
   const [tab, setTab] = useState<"links" | "guide">("links");
   const [data, setData] = useState<ConnectionData | null>(null);
@@ -101,6 +111,8 @@ export function ConnectionDialog({
           worker_id: worker,
           session_id: session,
           country_code: country || null,
+          group_id: group,
+          tunnel: mode === "tunnel",
         }),
       })
         .then((value) => {
@@ -115,7 +127,7 @@ export function ConnectionDialog({
       abort.abort();
       window.clearTimeout(timer);
     };
-  }, [open, effectiveHost, worker, session, country]);
+  }, [open, effectiveHost, worker, session, country, group, mode]);
   useEffect(() => {
     if (copied) {
       const timer = window.setTimeout(() => setCopied(""), 2000);
@@ -167,6 +179,35 @@ export function ConnectionDialog({
           id="connection-links"
           aria-labelledby="connection-links-tab"
         >
+          <div className="form-two">
+            <label>
+              连接方式
+              <select
+                value={mode}
+                onChange={(e) => {
+                  setMode(e.target.value as "direct" | "tunnel");
+                  setHostOverride(null);
+                }}
+              >
+                <option value="direct">公网直连</option>
+                <option value="tunnel">SSH 隧道</option>
+              </select>
+            </label>
+            <label>
+              项目资源组
+              <select
+                aria-label="项目资源组"
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
+              >
+                {groups.data?.items.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name} · 可分配 {g.fresh}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <label>
             服务器地址
             <input
@@ -177,7 +218,9 @@ export function ConnectionDialog({
               autoComplete="off"
             />
             <small className="field-help">
-              填写客户端能访问的 IP 或域名，不含协议和端口。
+              {mode === "direct"
+                ? "使用服务器公网 IP / 可直达代理域名，管理域名不一定支持代理端口。"
+                : "需要先建立 SSH 转发；此处使用本机地址，端口按服务器监听值生成。"}
             </small>
           </label>
           <div className="form-two">
@@ -259,6 +302,31 @@ export function ConnectionDialog({
                   value={data.links.socks5h}
                   onCopy={() => void copy(data.links.socks5h, "SOCKS5h 链接")}
                 />
+              </details>
+              <details className="dns-link">
+                <summary>结构化配置与 curl 示例</summary>
+                <div className="connection-links">
+                  <CopyField
+                    title="HTTP 结构化配置（含密码）"
+                    value={JSON.stringify(data.structured.http, null, 2)}
+                    onCopy={() =>
+                      void copy(
+                        JSON.stringify(data.structured.http, null, 2),
+                        "HTTP 结构化配置",
+                      )
+                    }
+                  />
+                  <CopyField
+                    title="curl 示例"
+                    value={`curl --proxy '${data.links.socks5h}' https://api.ipify.org`}
+                    onCopy={() =>
+                      void copy(
+                        `curl --proxy '${data.links.socks5h}' https://api.ipify.org`,
+                        "curl 示例",
+                      )
+                    }
+                  />
+                </div>
               </details>
               <p className="field-help">
                 以上链接已包含代理密码，可直接粘贴到客户端。HTTPS 目标也使用

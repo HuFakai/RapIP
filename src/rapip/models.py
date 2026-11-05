@@ -32,10 +32,12 @@ class Route:
     session: str
     worker: str | None = None
     country: str | None = None
+    group: str = "default"
 
     @property
     def slot(self) -> str:
-        return f"owner:worker:{self.worker}" if self.worker else f"owner:anonymous:{self.session}"
+        prefix = "owner" if self.group == "default" else f"owner:group:{self.group}"
+        return f"{prefix}:worker:{self.worker}" if self.worker else f"{prefix}:anonymous:{self.session}"
 
     @classmethod
     def parse(cls, username: str) -> Route:
@@ -46,10 +48,15 @@ class Route:
             raise GatewayError("INVALID_USERNAME", "用户名格式不正确", 400)
         user, rest = parts[0], parts[1:]
         country = worker = None
+        group = "default"
         if rest[:1] == ["country"] and len(rest) >= 2:
             country, rest = rest[1].upper(), rest[2:]
             if not re.fullmatch(r"[A-Z]{2}", country):
                 raise GatewayError("INVALID_COUNTRY", "国家代码应为两位字母", 400)
+        if rest[:1] == ["group"] and len(rest) >= 2:
+            group, rest = rest[1], rest[2:]
+            if not re.fullmatch(r"[A-Za-z0-9]{1,32}", group):
+                raise GatewayError("INVALID_GROUP", "分组 ID 需为 1–32 位字母数字", 400)
         if rest[:1] == ["worker"] and len(rest) >= 2:
             worker, rest = rest[1], rest[2:]
         if len(rest) != 2 or rest[0] != "session" or (country and not worker):
@@ -57,7 +64,7 @@ class Route:
         session = rest[1]
         if not all(re.fullmatch(r"[A-Za-z0-9]{1,64}", s) for s in (session, worker or "x")):
             raise GatewayError("INVALID_USERNAME", "会话和工位仅支持字母数字", 400)
-        return cls(user, session, worker, country)
+        return cls(user, session, worker, country, group)
 
 
 @dataclass
@@ -79,6 +86,12 @@ class Node:
     drain_until: float | None = None
     binding_id: str | None = None
     generation: int = 0
+    group_id: str = "default"
+    slot_id: str = ""
+    membership_version: int = 1
+    quality: dict = field(default_factory=dict)
+    latency_ms: float | None = None
+    last_success_at: float | None = None
 
     def public(self) -> dict:
         return {k: v for k, v in asdict(self).items() if k not in {"username", "password"}}
@@ -98,6 +111,8 @@ class Binding:
     last_detached: float = field(default_factory=time.time)
     released: bool = False
     failovers: int = 0
+    group_id: str = "default"
+    policy_version: int = 0
 
 
 @dataclass
@@ -115,6 +130,9 @@ class Replacement:
     retry_at: float = 0
     before_ips: list[str] = field(default_factory=list)
     redraws: int = 0
+    group_id: str = "default"
+    slot_id: str = ""
+    cause: str = "business"
 
 
 @dataclass
@@ -126,3 +144,5 @@ class Operation:
     completed_at: float | None = None
     error: str | None = None
     result: dict = field(default_factory=dict)
+    group_id: str = ""
+    account_id: str = ""

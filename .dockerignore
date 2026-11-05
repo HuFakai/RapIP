@@ -13,3 +13,5 @@ web/dist
 test-results
 playwright-report
 .rapip-deploy.lock
+
+config/quality_sources.json

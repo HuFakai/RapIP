@@ -21,6 +21,7 @@ def main():
     proxy_bind = env.get("RAPIP_PROXY_BIND_IP") or env.get("RAPIP_BIND_IP") or "127.0.0.1"
     loopback = {"127.0.0.1", "::1", "localhost"}
     admin_host = "127.0.0.1" if admin_bind in loopback else server
+    admin_url = env.get("RAPIP_PUBLIC_ADMIN_URL") or f"http://{admin_host}:{admin_port}"
     proxy_host = env.get("RAPIP_PUBLIC_PROXY_HOST") or ("127.0.0.1" if proxy_bind in loopback else server)
     proxy_host = f"[{proxy_host.strip('[]')}]" if ":" in proxy_host else proxy_host
     public_socks = env.get("RAPIP_PUBLIC_SOCKS_PORT") or str(socks_port)
@@ -29,7 +30,7 @@ def main():
     credentials = f"{quote(username, safe='')}:{quote(proxy_password, safe='')}"
     report = f"""RapIP 部署/更新成功（容器健康检查已通过）
 
-管理页面：http://{admin_host}:{admin_port}
+管理页面：{admin_url}
 管理员用户名：{admin_user}
 管理员密码：{admin_password}
 代理基础用户名：{proxy_user}
@@ -44,7 +45,8 @@ def main():
 
 默认仅本机发布时，在客户端电脑建立 SSH 隧道：
 ssh -N -L {admin_port}:127.0.0.1:{admin_port} -L {socks_port}:127.0.0.1:{socks_port} -L {http_port}:127.0.0.1:{http_port} user@{server}
-然后访问 http://127.0.0.1:{admin_port}；代理通过本机 {socks_port}/{http_port} 接入。
+隧道代理通过本机 {socks_port}/{http_port} 接入；管理页面优先访问上方正式地址。
+启用 Cookie Secure 后，应通过 HTTPS 域名登录，普通 HTTP 隧道不作登录入口。
 user 替换为服务器 SSH 用户；检测到的服务器地址可能是内网 IP，需替换为实际可达地址。
 公网 NAT 和 HTTPS 反代地址请按实际配置，脚本不自动识别公网 IP、不开放防火墙。
 

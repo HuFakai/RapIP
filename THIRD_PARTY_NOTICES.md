@@ -4,3 +4,5 @@
 - `web/src/components/ui` follows the source-owned component composition used by [shadcn/ui](https://ui.shadcn.com/) and uses Radix primitives, class-variance-authority, clsx and tailwind-merge. These local wrappers are maintained with this application.
 - Other dependency versions are pinned by `uv.lock`, `requirements.lock` and `web/package-lock.json`; individual package licenses remain with their distributions.
 - Country SVG flags are loaded on demand from [flag-icons](https://github.com/lipis/flag-icons), MIT license; terms are retained in `web/vendor/flag-icons.LICENSE` and included in the runtime image.
+
+- Historical charts use [Apache ECharts](https://echarts.apache.org/) (Apache-2.0), its rendering dependency zrender (BSD-3-Clause), and tslib (0BSD). Distribution terms are retained in `web/vendor/` and copied into the runtime image.

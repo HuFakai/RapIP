@@ -2,9 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { randomId } from "./browser";
 
 let csrf: string | null = null;
+const reads = new Map<string, { at: number; promise: Promise<unknown> }>();
+function readShared<T>(path: string): Promise<T> {
+  const previous = reads.get(path);
+  if (previous && Date.now() - previous.at < 1000)
+    return previous.promise as Promise<T>;
+  const promise = api<T>(path).catch((error) => {
+    if (reads.get(path)?.promise === promise) reads.delete(path);
+    throw error;
+  });
+  reads.set(path, { at: Date.now(), promise });
+  if (reads.size > 200) reads.delete(reads.keys().next().value!);
+  return promise;
+}
 const mutationKeys = new Map<string, string>();
 export function setCsrf(value: string | null) {
   csrf = value;
+  reads.clear();
 }
 
 export class ApiError extends Error {
@@ -85,7 +99,7 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
     loading.current = true;
     const seq = ++sequence.current;
     try {
-      const value = await api<T>(path);
+      const value = await readShared<T>(path);
       if (mounted.current && seq === sequence.current) {
         setData(value);
         setError("");
@@ -115,13 +129,13 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
       void refresh();
     };
     run();
-    const timer = window.setInterval(run, interval);
+    const timer = interval > 0 ? window.setInterval(run, interval) : undefined;
     window.addEventListener("rapip:refresh", run);
     document.addEventListener("visibilitychange", run);
     return () => {
       mounted.current = false;
       sequence.current++;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearInterval(timer);
       window.removeEventListener("rapip:refresh", run);
       document.removeEventListener("visibilitychange", run);
     };
@@ -130,6 +144,7 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
 }
 
 export function refreshAll() {
+  reads.clear();
   window.dispatchEvent(new Event("rapip:refresh"));
 }
 
@@ -140,6 +155,15 @@ export interface Paged<T> {
   page_size: number;
 }
 export interface NodeData {
+  group_id: string;
+  slot_id: string;
+  used: boolean;
+  created_at: number;
+  fail_count: number;
+  connections: number;
+  worker: string | null;
+  latency_ms: number | null;
+  quality: import("./v2").QualityResult;
   id: string;
   account_id: string;
   ip: string;
@@ -158,6 +182,8 @@ export interface Generation {
   drain_until: number | null;
 }
 export interface BindingData {
+  group_id: string;
+  policy_version: number;
   id: string;
   worker: string | null;
   session: string;

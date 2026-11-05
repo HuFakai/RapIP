@@ -49,6 +49,15 @@ def address_bytes(host: str, port: int) -> bytes:
     return target + struct.pack("!H", port)
 
 
+def target_text(target: bytes) -> str:
+    port = struct.unpack("!H", target[-2:])[0]
+    if target[0] == 3:
+        host = target[2 : 2 + target[1]].decode("ascii", "replace")
+    else:
+        host = str(ipaddress.ip_address(target[1:-2]))
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
 async def close_writer(writer: asyncio.StreamWriter | None) -> None:
     if writer:
         writer.close()
@@ -157,6 +166,8 @@ class SocksServer:
         upstream_writer = None
         replied = False
         binding = None
+        observation = self.gateway.observer.begin("socks5")
+        result, reason = "protocol_error", "peer_closed"
         try:
             if len(self.handlers) > self.gateway.settings.max_connections:
                 return
@@ -186,9 +197,12 @@ class SocksServer:
                     hmac.compare_digest(route.user, config.socks_user)
                     and hmac.compare_digest(password, config.socks_password.encode())
                 ):
+                    result = "authentication_rejected"
                     writer.write(b"\x01\x01")
                     await writer.drain()
                     return
+                if route.group in self.gateway.quality.groups:
+                    self.gateway.observer.routed(observation, route)
                 writer.write(b"\x01\x00")
                 await writer.drain()
                 request = await reader.readexactly(4)
@@ -196,6 +210,7 @@ class SocksServer:
                     raise UpstreamError("command", 7)
                 target = bytes([request[3]]) + await read_address(reader, request[3])
                 target += await reader.readexactly(2)
+                observation["target"] = target_text(target)
             for attempt in range(2):
                 binding, node, generation = await self.gateway.acquire(route)
                 try:
@@ -203,7 +218,7 @@ class SocksServer:
                         node, target, egress_proxy=self.gateway.config.egress_proxy
                     )
                     tunnel_id = await self.gateway.attach(
-                        binding.id, node.id, generation, writer, upstream_writer
+                        binding.id, node.id, generation, writer, upstream_writer, observation=observation
                     )
                     await self.gateway.connection_success(node.id)
                     break
@@ -232,20 +247,23 @@ class SocksServer:
                 group.create_task(pump(reader, upstream_writer, "up"))
                 group.create_task(pump(upstream_reader, writer, "down"))
         except UpstreamError as error:
+            result, reason = "upstream_" + error.kind, "upstream_error"
             if not replied:
                 writer.write(bytes([5, error.reply, 0, 1]) + bytes(6))
                 with contextlib.suppress(OSError):
                     await writer.drain()
-        except GatewayError:
+        except GatewayError as error:
+            result, reason = error.code, "scheduler_rejected"
             if not replied:
                 writer.write(b"\x05\x01\x00\x01" + bytes(6))
                 with contextlib.suppress(OSError):
                     await writer.drain()
         except (Exception, asyncio.CancelledError):
-            pass
+            reason = "interrupted" if self.gateway.stopping else "io_error"
         finally:
             await close_writer(upstream_writer)
             await close_writer(writer)
             if tunnel_id:
                 await self.gateway.detach(tunnel_id)
+            self.gateway.observer.finish(observation, result, reason)
             self.handlers.discard(task)

@@ -1,5 +1,7 @@
 import {
   useCallback,
+  lazy,
+  Suspense,
   useEffect,
   useRef,
   useState,
@@ -8,9 +10,7 @@ import {
 } from "react";
 import {
   Activity,
-  ArrowDownLeft,
   ArrowRight,
-  ArrowUpRight,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -42,29 +42,43 @@ import {
   useQuery,
   type AccountData,
   type BindingData,
-  type EventData,
-  type NodeData,
   type Paged,
   type SettingsData,
   type Stats,
   type TaskData,
 } from "./lib/api";
-import { bytes, date, labels } from "./lib/utils";
+import { date, labels } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
-import SpotlightCard from "./components/reactbits/SpotlightCard";
 import { ConnectionDialog } from "./components/ConnectionDialog";
-import { CountryFlag } from "./components/CountryFlag";
+import { Nodes } from "./components/operations/Nodes";
+import { Groups, QualitySources } from "./components/operations/Groups";
+import { Connections } from "./components/operations/Connections";
+import { Tasks } from "./components/operations/Tasks";
+import { queryString, type Group } from "./lib/v2";
 import { AppearanceSettings } from "./components/AppearanceSettings";
 
+const Overview = lazy(() =>
+  import("./components/operations/Overview").then((m) => ({
+    default: m.Overview,
+  })),
+);
+
 type PageId =
-  "overview" | "bindings" | "nodes" | "accounts" | "tasks" | "settings";
+  | "overview"
+  | "bindings"
+  | "nodes"
+  | "accounts"
+  | "tasks"
+  | "settings"
+  | "groups"
+  | "connections";
 const navigation = [
   {
     id: "overview",
     label: "代理总览",
     icon: LayoutDashboard,
-    caption: "资源与连接运行状态",
+    caption: "库存、质量、连接与补货，一屏掌握",
   },
   {
     id: "bindings",
@@ -77,6 +91,18 @@ const navigation = [
     label: "IP 资源池",
     icon: Layers3,
     caption: "查看每一个节点的生命周期",
+  },
+  {
+    id: "groups",
+    label: "质量分组",
+    icon: ShieldCheck,
+    caption: "按项目筛选资源与质量准入",
+  },
+  {
+    id: "connections",
+    label: "连接记录",
+    icon: Network,
+    caption: "建立结果、出口与连接生命周期",
   },
   {
     id: "accounts",
@@ -274,399 +300,6 @@ function Login({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function Overview({
-  stats,
-  onNavigate,
-  onConnect,
-}: {
-  stats?: Stats;
-  onNavigate: (page: PageId) => void;
-  onConnect: () => void;
-}) {
-  const nodes = useQuery<Paged<NodeData>>("/nodes?page_size=6");
-  const events = useQuery<Paged<EventData>>("/events?page_size=5");
-  const [history, setHistory] = useState<
-    { up: number; down: number; at: number }[]
-  >([]);
-  useEffect(() => {
-    if (stats)
-      setHistory((previous) =>
-        previous.at(-1)?.at === stats.at
-          ? previous
-          : [
-              ...previous.slice(-29),
-              { up: stats.bytes_up, down: stats.bytes_down, at: stats.at },
-            ],
-      );
-  }, [stats]);
-  const previous = history.at(-2);
-  const latest = history.at(-1);
-  const elapsed = latest && previous ? Math.max(1, latest.at - previous.at) : 1;
-  const up =
-    latest && previous ? Math.max(0, (latest.up - previous.up) / elapsed) : 0;
-  const down =
-    latest && previous
-      ? Math.max(0, (latest.down - previous.down) / elapsed)
-      : 0;
-  const rates = history.map((value, index) =>
-    index
-      ? Math.max(
-          0,
-          (value.up +
-            value.down -
-            (history[index - 1].up + history[index - 1].down)) /
-            Math.max(1, value.at - history[index - 1].at),
-        )
-      : 0,
-  );
-  const max = Math.max(1, ...rates);
-  const points = rates
-    .map(
-      (value, index) =>
-        `${(index / Math.max(1, rates.length - 1)) * 600},${90 - (value / max) * 65}`,
-    )
-    .join(" ");
-  return (
-    <div className="overview-page page-enter">
-      <section className="metrics-strip" aria-label="关键指标">
-        {[
-          {
-            label: "可分配 IP",
-            value: stats?.fresh_count,
-            detail: `总资源 ${stats?.total_ips ?? "—"} 个`,
-            cls: "accent",
-          },
-          {
-            label: "活跃工位",
-            value: stats?.active_bindings,
-            detail: `当前上限 ${stats?.binding_limit ?? "—"} 个`,
-          },
-          {
-            label: "TCP 连接",
-            value: stats?.active_connections,
-            detail: "包含排空中的连接",
-          },
-          {
-            label: "补货任务",
-            value: stats?.replacement_pending,
-            detail: `等待分配 ${stats?.waiters ?? "—"} 个`,
-          },
-        ].map((item) => (
-          <div className="metric" key={item.label}>
-            <span>{item.label}</span>
-            <strong className={item.cls}>
-              {item.value ?? "—"}
-              <small>个</small>
-            </strong>
-            <p>{item.detail}</p>
-          </div>
-        ))}
-      </section>
-      <div className="overview-main">
-        <section className="surface pool-surface">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">RESOURCE POOL</span>
-              <h2>出口资源</h2>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onNavigate("nodes")}
-            >
-              全部节点 <ArrowUpRight size={15} />
-            </Button>
-          </div>
-          <div className="pool-legend">
-            <span>
-              <i className="dot accent-dot" />
-              可分配 {stats?.fresh_count ?? "—"}
-            </span>
-            <span>
-              <i className="dot white-dot" />
-              使用中 {stats?.in_use_count ?? "—"}
-            </span>
-            <span>
-              <i className="dot amber-dot" />
-              排空 / 补货{" "}
-              {(stats?.draining_count ?? 0) + (stats?.replacing_count ?? 0)}
-            </span>
-          </div>
-          <div className="node-grid">
-            {nodes.data?.items.map((node, index) => (
-              <SpotlightCard
-                key={node.id}
-                className={`node-card node-card-${node.state.toLowerCase()}`}
-                spotlightColor="var(--spotlight-color)"
-              >
-                <div className="node-card-top">
-                  <span className="mono">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <CountryFlag code={node.country} />
-                </div>
-                <strong className="mono">{node.ip}</strong>
-                <div className="node-card-bottom">
-                  <span>
-                    {node.country || "—"}{" "}
-                    <span className="muted">/ {node.account_id}</span>
-                  </span>
-                  <i className={`node-led state-${node.state.toLowerCase()}`} />
-                </div>
-              </SpotlightCard>
-            ))}
-          </div>
-          {nodes.data?.items.length === 0 && (
-            <Empty title="尚未同步到节点">前往上游账号添加或同步资源。</Empty>
-          )}
-          <ErrorNote message={nodes.error} />
-          <div className="pool-bottom">
-            <ShieldCheck size={15} />
-            <span>
-              独占分配 · 弃用 IP 冷却 {stats?.blacklist_count ?? 0} 个
-            </span>
-          </div>
-        </section>
-        <aside className="surface gateway-surface">
-          <span className="eyebrow">GATEWAY</span>
-          <div className="gateway-diagram">
-            <div className="diagram-client">
-              <Terminal size={22} />
-            </div>
-            <div className="diagram-wire">
-              <i />
-              <i />
-              <i />
-            </div>
-            <div className="diagram-gateway">
-              <Network size={28} />
-            </div>
-            <div className="diagram-wire">
-              <i />
-              <i />
-              <i />
-            </div>
-            <div className="diagram-out">
-              <Globe2 size={22} />
-            </div>
-          </div>
-          <h2>一个入口，统一调度</h2>
-          <p>
-            SOCKS5 与 HTTP 共享会话绑定。
-            <br />
-            每批任务结束后，按需切换出口。
-          </p>
-          <Button variant="secondary" onClick={onConnect}>
-            <Terminal size={16} />
-            查看连接配置
-            <ArrowUpRight size={15} />
-          </Button>
-          <div className="gateway-foot">
-            <span className="pulse-dot" />
-            {stats?.ready ? "网关正在运行" : "等待网关就绪"}
-          </div>
-        </aside>
-      </div>
-      <div className="overview-secondary">
-        <section className="surface traffic-surface">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">TRAFFIC</span>
-              <h2>传输速率</h2>
-            </div>
-            <span className="small muted">当前页面观测</span>
-          </div>
-          <div className="traffic-values">
-            <div>
-              <ArrowUpRight size={15} />
-              <span>上传</span>
-              <strong>
-                {bytes(Math.round(up))}
-                <small>/s</small>
-              </strong>
-            </div>
-            <div>
-              <ArrowDownLeft size={15} />
-              <span>下载</span>
-              <strong>
-                {bytes(Math.round(down))}
-                <small>/s</small>
-              </strong>
-            </div>
-          </div>
-          <div className="traffic-chart">
-            <svg
-              viewBox="0 0 600 100"
-              preserveAspectRatio="none"
-              aria-label="当前页面观测的流量趋势"
-            >
-              <defs>
-                <linearGradient id="traffic-fill" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="0"
-                    stopColor="var(--accent)"
-                    stopOpacity=".17"
-                  />
-                  <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M0 25H600M0 57H600M0 90H600"
-                stroke="#ffffff08"
-                fill="none"
-              />
-              <polygon
-                points={`0,100 ${points || "0,90 600,90"} 600,100`}
-                fill="url(#traffic-fill)"
-              />
-              <polyline
-                points={points || "0,90 600,90"}
-                stroke="var(--accent)"
-                strokeWidth="1.6"
-                fill="none"
-                vectorEffect="non-scaling-stroke"
-              />
-            </svg>
-          </div>
-          <div className="chart-caption">
-            <span>累计上传 {bytes(stats?.bytes_up ?? 0)}</span>
-            <span>累计下载 {bytes(stats?.bytes_down ?? 0)}</span>
-          </div>
-        </section>
-        <section className="surface events-surface">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">ACTIVITY</span>
-              <h2>最近事件</h2>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="查看全部事件"
-              onClick={() => onNavigate("tasks")}
-            >
-              <ArrowUpRight size={17} />
-            </Button>
-          </div>
-          <div className="event-list">
-            {events.data?.items.map((item) => (
-              <div className="event-row" key={item.id}>
-                <span
-                  className={`event-dot ${item.kind === "error" ? "event-dot-error" : ""}`}
-                />
-                <div>
-                  <span>{item.message}</span>
-                  <small>{item.account_id || item.ip || "网关调度"}</small>
-                </div>
-                <time>
-                  {new Date(item.at * 1000).toLocaleTimeString("zh-CN", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </time>
-              </div>
-            ))}
-            {events.data?.items.length === 0 && (
-              <p className="muted small">事件将在资源同步或连接建立后出现。</p>
-            )}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function NodesPage() {
-  const [filter, setFilter] = useState("");
-  const [search, setSearch] = useState("");
-  const [current, setPage] = useState(1);
-  const query = useQuery<Paged<NodeData>>(
-    `/nodes?page=${current}&page_size=20&state=${filter}&q=${encodeURIComponent(search)}`,
-  );
-  return (
-    <section className="surface page-enter">
-      <div className="table-toolbar">
-        <div className="search-input">
-          <Search size={16} />
-          <input
-            aria-label="搜索 IP 或账号"
-            placeholder="搜索 IP 或账号"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-        <select
-          aria-label="节点状态"
-          value={filter}
-          onChange={(event) => {
-            setFilter(event.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">全部状态</option>
-          {["FRESH", "IN_USE", "DRAINING", "REPLACING", "QUARANTINED"].map(
-            (value) => (
-              <option key={value} value={value}>
-                {labels[value]}
-              </option>
-            ),
-          )}
-        </select>
-      </div>
-      <ErrorNote message={query.error} />
-      <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>出口 IP</th>
-              <th>国家</th>
-              <th>归属账号</th>
-              <th>状态</th>
-              <th>最近验证</th>
-              <th>说明</th>
-            </tr>
-          </thead>
-          <tbody>
-            {query.data?.items.map((node) => (
-              <tr key={node.id}>
-                <td className="mono strong">
-                  {node.ip}
-                  <small className="port">:{node.port}</small>
-                </td>
-                <td>
-                  <span className="country-code">
-                    <CountryFlag code={node.country} />
-                    {node.country || "未知"}
-                  </span>
-                </td>
-                <td>{node.account_id}</td>
-                <td>
-                  <Badge state={node.state} />
-                </td>
-                <td className="small muted">{date(node.checked_at)}</td>
-                <td className="small muted">{node.reason}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {query.data?.items.length === 0 && (
-        <Empty icon={<Layers3 size={25} />} title="没有符合条件的节点">
-          调整筛选条件，或检查账号同步状态。
-        </Empty>
-      )}
-      <Pager
-        current={current}
-        total={query.data?.total ?? 0}
-        setPage={setPage}
-      />
-    </section>
-  );
-}
-
 function BindingsPage({
   onRotate,
   onRelease,
@@ -676,11 +309,15 @@ function BindingsPage({
   onRelease: (item: BindingData) => void;
   onConnect: () => void;
 }) {
+  const [group, setGroup] = useState(
+    new URLSearchParams(location.hash.split("?")[1]).get("group_id") ?? "",
+  );
+  const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
   const [current, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const query = useQuery<Paged<BindingData>>(
-    `/bindings?page=${current}&page_size=20&q=${encodeURIComponent(search)}`,
+    `/bindings?page=${current}&page_size=20&q=${encodeURIComponent(search)}&group_id=${encodeURIComponent(group)}`,
   );
   return (
     <section className="surface page-enter">
@@ -697,6 +334,21 @@ function BindingsPage({
             }}
           />
         </div>
+        <select
+          aria-label="筛选会话分组"
+          value={group}
+          onChange={(e) => {
+            setGroup(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">全部分组</option>
+          {groups.data?.items.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+        </select>
         <Button variant="secondary" size="sm" onClick={onConnect}>
           <Plus size={15} />
           连接配置
@@ -726,7 +378,8 @@ function BindingsPage({
               <div className="binding-ip">
                 <span className="mono strong">{item.ip || "等待可用出口"}</span>
                 <span className="small muted">
-                  {item.country || "任意国家"} · 第 {item.generation} 代
+                  {item.group_id} · {item.country || "任意国家"} · 第{" "}
+                  {item.generation} 代
                 </span>
               </div>
               <div>
@@ -1080,99 +733,6 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
   );
 }
 
-function TasksPage() {
-  const [current, setPage] = useState(1);
-  const tasks = useQuery<Paged<TaskData>>(
-    `/tasks?page=${current}&page_size=20`,
-  );
-  const events = useQuery<Paged<EventData>>("/events?page_size=20");
-  return (
-    <div className="page-enter">
-      <section className="surface">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">OPERATIONS</span>
-            <h2>执行任务</h2>
-          </div>
-          <span className="small muted">控制操作与上游补货分别追踪</span>
-        </div>
-        <ErrorNote message={tasks.error} />
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>任务 ID</th>
-                <th>类型</th>
-                <th>状态</th>
-                <th>创建时间</th>
-                <th>结果说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.data?.items.map((item) => (
-                <tr key={item.id}>
-                  <td className="mono">{item.id.slice(0, 10)}</td>
-                  <td>
-                    {(
-                      {
-                        rotate: "轮换出口",
-                        release: "释放绑定",
-                        sync: "资源同步",
-                        reload: "配置重载",
-                        replacement: "上游补货",
-                      } as Record<string, string>
-                    )[item.kind] || item.kind}
-                  </td>
-                  <td>
-                    <Badge state={item.state} />
-                  </td>
-                  <td className="small muted">{date(item.created_at)}</td>
-                  <td className="small muted">
-                    {item.error ||
-                      (item.state === "COMPLETED" ? "已完成" : "等待任务推进")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {tasks.data?.items.length === 0 && (
-          <Empty icon={<Activity size={25} />} title="暂无执行任务">
-            换号、释放或同步操作会记录在这里。
-          </Empty>
-        )}
-        <Pager
-          current={current}
-          total={tasks.data?.total ?? 0}
-          setPage={setPage}
-        />
-      </section>
-      <section className="surface event-history">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">EVENT LOG</span>
-            <h2>最近事件</h2>
-          </div>
-        </div>
-        {events.data?.items.map((item) => (
-          <div className="log-row" key={item.id}>
-            <time className="mono">{date(item.at)}</time>
-            <span
-              className={`log-kind ${item.kind === "error" ? "danger-text" : ""}`}
-            >
-              {item.kind.toUpperCase()}
-            </span>
-            <span>{item.message}</span>
-            <span className="muted small">
-              {item.account_id || item.ip || ""}
-            </span>
-          </div>
-        ))}
-      </section>
-    </div>
-  );
-}
-
 function SettingsPage({ notify }: { notify: (message: string) => void }) {
   const query = useQuery<SettingsData>("/settings", true, 15000);
   const [busy, setBusy] = useState(false);
@@ -1202,8 +762,9 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
     const form = new FormData(event.currentTarget);
     const values: Record<string, number | string> = {};
     for (const [key, value] of form)
-      values[key] =
-        key === "session_switch_mode" ? String(value) : Number(value);
+      values[key] = ["session_switch_mode", "connection_log_mode"].includes(key)
+        ? String(value)
+        : Number(value);
     try {
       await mutate("/settings", values, "PATCH");
       notify("设置已保存并生效");
@@ -1215,6 +776,13 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
     }
   }
   const fields = [
+    {
+      key: "quality_daily_limit",
+      label: "分组每日全局替换预算",
+      detail: "所有非默认资源组共用；0 暂停分组替换",
+      min: 0,
+      max: 100000,
+    },
     {
       key: "max_active_bindings",
       label: "活跃绑定上限",
@@ -1261,6 +829,7 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
   return (
     <div className="page-enter">
       <AppearanceSettings />
+      <QualitySources notify={notify} />
       <ErrorNote message={query.error} />
       {query.data && (
         <>
@@ -1301,6 +870,23 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
                           : "已关闭"}
                     </span>
                   </button>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <label htmlFor="connection_log_mode">连接明细记录</label>
+                    <p>
+                      聚合指标始终采集，明细可关闭；全量成功记录保留 24 小时
+                    </p>
+                  </div>
+                  <select
+                    id="connection_log_mode"
+                    name="connection_log_mode"
+                    defaultValue={String(query.data.values.connection_log_mode)}
+                  >
+                    <option value="off">关闭</option>
+                    <option value="errors">仅失败</option>
+                    <option value="all">全量</option>
+                  </select>
                 </div>
                 {fields.map((field) => (
                   <div className="setting-row" key={field.key}>
@@ -1385,9 +971,10 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
 }
 
 export default function App() {
+  const [routeKey, setRouteKey] = useState(() => window.location.hash);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [pageId, setPageId] = useState<PageId>(() => {
-    const initial = window.location.hash.slice(1);
+    const initial = window.location.hash.slice(1).split("?")[0];
     return navigation.some((item) => item.id === initial)
       ? (initial as PageId)
       : "overview";
@@ -1410,10 +997,15 @@ export default function App() {
   );
   const active = navigation.find((item) => item.id === pageId)!;
   const notify = useCallback((message: string) => setToast(message), []);
-  const navigate = useCallback((value: PageId) => {
-    setPageId(value);
-    window.location.hash = value;
-  }, []);
+  const navigate = useCallback(
+    (value: PageId, filters?: Record<string, string>) => {
+      setPageId(value);
+      setRouteKey("#" + value + (filters ? "?" + queryString(filters) : ""));
+      window.location.hash =
+        value + (filters ? "?" + queryString(filters) : "");
+    },
+    [],
+  );
   useEffect(() => {
     void api<{ csrf: string }>("/auth/me")
       .then((result) => {
@@ -1426,7 +1018,8 @@ export default function App() {
       setAuthenticated(false);
     };
     const hashChange = () => {
-      const id = window.location.hash.slice(1);
+      setRouteKey(window.location.hash);
+      const id = window.location.hash.slice(1).split("?")[0];
       if (navigation.some((item) => item.id === id)) setPageId(id as PageId);
     };
     window.addEventListener("rapip:unauthorized", unauthorized);
@@ -1548,7 +1141,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <Brand />
-          <span className="version-tag">v0.1</span>
+          <span className="version-tag">v0.2</span>
         </div>
         <div className="workspace-label">WORKSPACE</div>
         <nav aria-label="主导航">
@@ -1574,7 +1167,7 @@ export default function App() {
             <ShieldCheck size={17} />
             <div>
               <strong>私有工作空间</strong>
-              <span>单管理员 · 本地部署</span>
+              <span>单管理员 · 私有网关</span>
             </div>
           </div>
           <button
@@ -1611,10 +1204,15 @@ export default function App() {
                   : "等待就绪"}
             </span>
             <span className="topbar-divider" />
-            <span className="mono">LOCAL / PRIVATE</span>
+            <span className="mono">
+              {settings.data?.deployment.version
+                ? `v${settings.data.deployment.version}`
+                : "RAPIP"}{" "}
+              / GATEWAY
+            </span>
           </div>
         </div>
-        <div className="content">
+        <div className="content content-compact">
           <header className="page-heading">
             <div>
               <span className="eyebrow">
@@ -1652,22 +1250,31 @@ export default function App() {
             </div>
           )}
           {pageId === "overview" && (
-            <Overview
-              stats={statsQuery.data}
-              onNavigate={navigate}
-              onConnect={() => setConnectionOpen(true)}
-            />
+            <Suspense
+              fallback={<p className="ops-footnote">正在加载运行看板…</p>}
+            >
+              <Overview
+                key={routeKey}
+                onNavigate={navigate}
+                onConnect={() => setConnectionOpen(true)}
+              />
+            </Suspense>
           )}
-          {pageId === "nodes" && <NodesPage />}
+          {pageId === "nodes" && <Nodes key={routeKey} notify={notify} />}
+          {pageId === "groups" && <Groups notify={notify} />}
+          {pageId === "connections" && (
+            <Connections key={routeKey} notify={notify} />
+          )}
           {pageId === "bindings" && (
             <BindingsPage
+              key={routeKey}
               onRotate={(item) => choose(item, "rotate")}
               onRelease={(item) => choose(item, "release")}
               onConnect={() => setConnectionOpen(true)}
             />
           )}
           {pageId === "accounts" && <AccountsPage notify={notify} />}
-          {pageId === "tasks" && <TasksPage />}
+          {pageId === "tasks" && <Tasks key={routeKey} />}
           {pageId === "settings" && <SettingsPage notify={notify} />}
           <footer className="workspace-footer">
             <span>

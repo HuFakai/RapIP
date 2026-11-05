@@ -3,6 +3,15 @@ import { Check, Palette } from "lucide-react";
 import { applyTheme, readTheme, themes } from "@/lib/theme";
 
 export function AppearanceSettings() {
+  const [density, setDensity] = useState(() => {
+    try {
+      return localStorage.getItem("rapip.density") === "comfortable"
+        ? "comfortable"
+        : "compact";
+    } catch {
+      return "compact";
+    }
+  });
   const [selected, setSelected] = useState(readTheme);
   function choose(index: number) {
     const theme = themes[(index + themes.length) % themes.length];
@@ -67,6 +76,26 @@ export function AppearanceSettings() {
             {selected === theme.id && <Check size={16} />}
           </button>
         ))}
+      </div>
+      <div className="ops-density">
+        <span>信息密度</span>
+        <select
+          aria-label="信息密度"
+          value={density}
+          onChange={(e) => {
+            const value = e.target.value;
+            setDensity(value);
+            document.documentElement.dataset.density = value;
+            try {
+              localStorage.setItem("rapip.density", value);
+            } catch {
+              /* preference only */
+            }
+          }}
+        >
+          <option value="compact">紧凑（默认）</option>
+          <option value="comfortable">舒适</option>
+        </select>
       </div>
     </section>
   );

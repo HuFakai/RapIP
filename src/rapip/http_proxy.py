@@ -27,6 +27,8 @@ class HttpProxy(SocksServer):
         upstream_writer = None
         tunnel_id = None
         replied = False
+        observation = self.gateway.observer.begin("http")
+        result, reason = "protocol_error", "peer_closed"
         try:
             if len(self.handlers) > self.gateway.settings.max_connections:
                 raise GatewayError("CONNECTION_LIMIT", "连接数超限", 503)
@@ -36,6 +38,7 @@ class HttpProxy(SocksServer):
                     raise ValueError("headers too large")
                 lines = raw[:-4].decode("iso-8859-1").split("\r\n")
                 method, uri, version = lines[0].split(" ")
+                observation["protocol"] = "connect" if method == "CONNECT" else "http"
                 if version not in {"HTTP/1.1", "HTTP/1.0"} or not method.isalpha():
                     raise ValueError("invalid method")
                 headers = []
@@ -46,6 +49,8 @@ class HttpProxy(SocksServer):
                     headers.append((key.lower(), value.strip()))
                 authentication = [v for k, v in headers if k == "proxy-authorization"]
                 if len(authentication) != 1 or not authentication[0].startswith("Basic "):
+                    result = "authentication_rejected"
+                    result = "authentication_rejected"
                     writer.write(
                         b'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="RapIP"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
                     )
@@ -59,12 +64,16 @@ class HttpProxy(SocksServer):
                     hmac.compare_digest(route.user.encode(), self.gateway.config.socks_user.encode())
                     and hmac.compare_digest(password.encode(), self.gateway.config.socks_password.encode())
                 ):
+                    result = "authentication_rejected"
                     writer.write(
                         b'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="RapIP"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
                     )
                     await writer.drain()
                     return
+                if route.group in self.gateway.quality.groups:
+                    self.gateway.observer.routed(observation, route)
                 if method == "CONNECT":
+                    observation["protocol"] = "connect"
                     destination = urlsplit("//" + uri)
                     host, port = destination.hostname, destination.port
                     if not host or not port or destination.path or destination.username:
@@ -80,6 +89,7 @@ class HttpProxy(SocksServer):
                         raise ValueError("absolute HTTP URI required")
                     host, port = destination.hostname, destination.port or 80
                 target = address_bytes(host, port)
+                observation["target"] = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
             for attempt in range(2):
                 binding, node, generation = await self.gateway.acquire(route)
                 try:
@@ -87,7 +97,7 @@ class HttpProxy(SocksServer):
                         node, target, egress_proxy=self.gateway.config.egress_proxy
                     )
                     tunnel_id = await self.gateway.attach(
-                        binding.id, node.id, generation, writer, upstream_writer
+                        binding.id, node.id, generation, writer, upstream_writer, observation=observation
                     )
                     await self.gateway.connection_success(node.id)
                     break
@@ -202,6 +212,8 @@ class HttpProxy(SocksServer):
                     body_task = group.create_task(request_body())
                     group.create_task(response_body())
         except (GatewayError, UpstreamError) as error:
+            result = error.code if isinstance(error, GatewayError) else "upstream_" + error.kind
+            reason = "connect_failed"
             if not replied:
                 status = 503 if isinstance(error, GatewayError) else 502
                 writer.write(
@@ -210,6 +222,7 @@ class HttpProxy(SocksServer):
                 with contextlib.suppress(OSError):
                     await writer.drain()
         except (Exception, asyncio.CancelledError):
+            reason = "interrupted" if self.gateway.stopping else "io_error"
             if not replied:
                 writer.write(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
         finally:
@@ -217,4 +230,5 @@ class HttpProxy(SocksServer):
             await close_writer(writer)
             if tunnel_id:
                 await self.gateway.detach(tunnel_id)
+            self.gateway.observer.finish(observation, result, reason)
             self.handlers.discard(task)

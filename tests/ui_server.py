@@ -73,6 +73,18 @@ def main():
             return True
 
         gateway = Gateway(config, provider_factory=lambda *args: provider, probe=healthy)
+
+        async def network(node, policy):
+            return {
+                "complete": True,
+                "successes": policy.samples,
+                "samples": policy.samples,
+                "max_latency_ms": 420,
+                "exits": [node.ip],
+                "exit_match": True,
+            }
+
+        gateway.quality.network_check = network
         app = create_app(config, gateway, lifecycle=False)
 
         @asynccontextmanager

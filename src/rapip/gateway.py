@@ -14,7 +14,9 @@ import aiohttp
 
 from .config import Config, private_json
 from .models import Binding, GatewayError, IPState, Node, Operation, Replacement, Route, uid
+from .observability import Observability
 from .provider import ProviderError, Webshare
+from .quality import QualityManager
 from .socks import probe_node
 from .storage import Storage
 
@@ -55,6 +57,8 @@ class Gateway:
         self.ready = False
         self.started_at = time.time()
         self.bytes_up = self.bytes_down = 0
+        self.observer = Observability(config.data_dir)
+        self.quality = QualityManager(self)
 
     async def start(self, background: bool = True, sync: bool = True):
         self.config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -81,6 +85,10 @@ class Gateway:
                 self.config.probe_enabled = value
             if hasattr(self.settings, key):
                 setattr(self.settings, key, value)
+        self.bytes_up, self.bytes_down = state.get("bytes_up", 0), state.get("bytes_down", 0)
+        self.observer.mode = state.get("log_mode", "errors")
+        self.quality.load(state.get("quality", {}))
+        await self.observer.open()
         self.client = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=25, connect=8),
             connector=aiohttp.TCPConnector(limit=20, limit_per_host=10),
@@ -106,6 +114,7 @@ class Gateway:
         if background:
             self.spawn(self._periodic(), "inspector")
             self.spawn(self._replacement_loop(), "replacement")
+            self.spawn(self._observe(), "observations")
         return self
 
     def reload_accounts(self):
@@ -152,13 +161,19 @@ class Gateway:
         if not self.storage_failed:
             async with self.lock:
                 await self._persist()
+        await self.observer.flush(self)
+        await self.observer.close()
         await self.client.close()
         await self.storage.close()
         self.owner_file.close()
 
     def _snapshot(self):
         return {
-            "schema": 1,
+            "schema": 2,
+            "quality": self.quality.snapshot(),
+            "bytes_up": self.bytes_up,
+            "bytes_down": self.bytes_down,
+            "log_mode": self.observer.mode,
             **{
                 name: {key: asdict(value) for key, value in getattr(self, name).items()}
                 for name in ("nodes", "bindings", "replacements", "operations")
@@ -207,12 +222,13 @@ class Gateway:
         )
         return self.settings.max_active_bindings or max(1, math.floor(total * 0.6))
 
-    def _fresh(self, country: str | None) -> Node | None:
+    def _fresh(self, country: str | None, group_id="default") -> Node | None:
         now = time.time()
         candidates = [
             n
             for n in self.nodes.values()
-            if n.state == IPState.FRESH
+            if self._fresh_eligible(n)
+            and n.group_id == group_id
             and self.accounts[n.account_id].enabled
             and self.account_health.get(n.account_id, {}).get("state") == "healthy"
             and (not country or n.country == country)
@@ -229,6 +245,8 @@ class Gateway:
             async with slot_lock:
                 async with self.changed:
                     self._writable()
+                    if route.group not in self.quality.groups:
+                        raise GatewayError("GROUP_DISABLED", "分组不存在或已暂停", 403)
                     if self.retired.get(self._retired_key(route), 0) > time.time():
                         raise GatewayError("SESSION_RETIRED", "该 session 已失效，请使用新的 session")
                     binding = self.binding_for(route.slot)
@@ -247,7 +265,7 @@ class Gateway:
                         return binding, self.nodes[binding.node_id], binding.generation
                     return await self._allocate(None, route)
 
-    async def _wait_node(self, country, new_binding: bool):
+    async def _wait_node(self, country, new_binding: bool, group_id="default"):
         deadline = asyncio.get_running_loop().time() + self.settings.pool_wait_timeout
         if self.waiters >= self.settings.max_waiters:
             raise GatewayError("QUEUE_FULL", "分配等待队列已满", 503)
@@ -255,8 +273,12 @@ class Gateway:
         try:
             while True:
                 self._writable()
+                if not self.quality.groups.get(group_id, {}).get("enabled"):
+                    raise GatewayError("GROUP_DISABLED", "分组已暂停新分配", 403)
                 active = sum(not b.released for b in self.bindings.values())
-                if (not new_binding or active < self.active_limit()) and (node := self._fresh(country)):
+                if (not new_binding or active < self.active_limit()) and (
+                    node := self._fresh(country, group_id)
+                ):
                     return node
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
@@ -274,11 +296,20 @@ class Gateway:
             self.waiters -= 1
 
     async def _allocate(self, binding: Binding | None, route: Route):
-        node = await self._wait_node(route.country, binding is None)
+        node = await self._wait_node(route.country, binding is None, route.group)
         if binding and binding.released:
             raise GatewayError("BINDING_RELEASED", "等待期间绑定已释放，请创建新 session")
         if not binding:
-            binding = Binding(uid(), route.slot, route.session, route.worker, route.country, node.id)
+            binding = Binding(
+                uid(),
+                route.slot,
+                route.session,
+                route.worker,
+                route.country,
+                node.id,
+                group_id=route.group,
+                policy_version=self.quality.groups[route.group]["version"],
+            )
             self.bindings[binding.id] = binding
         else:
             binding.node_id, binding.last_active = node.id, time.time()
@@ -289,7 +320,14 @@ class Gateway:
             binding.generation,
         )
         node.reason = "会话独占"
-        self.event("binding", "分配出口", binding_id=binding.id, ip=node.ip)
+        self.event(
+            "binding",
+            "分配出口",
+            binding_id=binding.id,
+            ip=node.ip,
+            group_id=node.group_id,
+            account_id=node.account_id,
+        )
         await self._persist()
         return binding, node, binding.generation
 
@@ -302,7 +340,7 @@ class Gateway:
     def _count_node(self, node_id):
         return sum(t["node_id"] == node_id for t in self.tunnels.values())
 
-    def _retire(self, node: Node, reason: str, replace: bool = True, redraws: int = 0):
+    def _retire(self, node: Node, reason: str, replace: bool = True, redraws: int = 0, cause="business"):
         if node.state in {IPState.ARCHIVED, IPState.REPLACING}:
             return
         node.reason, node.drain_until = reason, None
@@ -311,7 +349,17 @@ class Gateway:
         )
         if replace:
             node.state = IPState.REPLACING
-            job = Replacement(uid(), node.id, node.account_id, reason=reason, redraws=redraws)
+            self.quality.ensure_node(node)
+            job = Replacement(
+                uid(),
+                node.id,
+                node.account_id,
+                reason=reason,
+                redraws=redraws,
+                group_id=node.group_id,
+                slot_id=node.slot_id,
+                cause="collision" if redraws else cause,
+            )
             self.replacements[job.id] = job
         else:
             node.state = IPState.ARCHIVED
@@ -325,7 +373,7 @@ class Gateway:
             raise GatewayError("DRAIN_BUSY", "上一代连接仍在排空，请等待或选择强制切换")
         if session != binding.session and self.retired.get(f"{binding.slot}:{session}", 0) > time.time():
             raise GatewayError("SESSION_RETIRED", "新 session 已失效，请生成其他 ID")
-        node = await self._wait_node(country, False)
+        node = await self._wait_node(country, False, binding.group_id)
         if binding.released or binding.generation != generation_before_wait:
             raise GatewayError("VERSION_CONFLICT", "等待期间绑定已变化，请重试")
         old = self.nodes.get(binding.node_id)
@@ -334,6 +382,7 @@ class Gateway:
                 time.time() + self.settings.retired_session_ttl
             )
         binding.session, binding.country = session, country
+        binding.policy_version = self.quality.groups[binding.group_id]["version"]
         binding.node_id, binding.generation, binding.last_active = (
             node.id,
             binding.generation + 1,
@@ -357,7 +406,15 @@ class Gateway:
                 previous.reason = "等待旧连接结束"
             else:
                 self._retire(previous, "主动轮换")
-        self.event("rotate", "出口已轮换", binding_id=binding.id, ip=node.ip, mode=mode)
+        self.event(
+            "rotate",
+            "出口已轮换",
+            binding_id=binding.id,
+            ip=node.ip,
+            mode=mode,
+            group_id=node.group_id,
+            account_id=node.account_id,
+        )
         await self._persist()
         if mode == "hard":
             for previous in retire:
@@ -412,9 +469,9 @@ class Gateway:
                     node.state, node.drain_until = IPState.DRAINING, time.time() + self.settings.drain_timeout
                 else:
                     self._retire(node, "绑定释放")
-        self.event("release", "绑定已释放", binding_id=binding.id)
+        self.event("release", "绑定已释放", binding_id=binding.id, group_id=binding.group_id)
 
-    async def attach(self, binding_id, node_id, generation, client, upstream):
+    async def attach(self, binding_id, node_id, generation, client, upstream, observation=None):
         async with self.lock:
             if len(self.tunnels) >= self.settings.max_connections:
                 raise GatewayError("CONNECTION_LIMIT", "网关连接数已达上限", 503)
@@ -443,12 +500,19 @@ class Gateway:
                 "up": 0,
                 "down": 0,
             }
+            if observation is not None:
+                self.observer.established(observation, node, binding)
+                self.tunnels[tunnel_id]["observation"] = observation
             binding.last_active = time.time()
             return tunnel_id
 
     def traffic(self, tunnel_id, direction, size, at):
         if tunnel := self.tunnels.get(tunnel_id):
             tunnel[direction] += size
+            node = self.nodes[tunnel["node_id"]]
+            self.observer.add(direction, size, node.account_id, node.group_id)
+            if observation := tunnel.get("observation"):
+                observation[direction] += size
             self.bindings[tunnel["binding_id"]].last_active = at
             if direction == "up":
                 self.bytes_up += size
@@ -470,6 +534,7 @@ class Gateway:
 
     async def connection_success(self, node_id):
         self.nodes[node_id].fail_count = 0
+        self.nodes[node_id].last_success_at = time.time()
 
     async def connection_failure(self, node_id: str, kind: str) -> bool:
         async with self.changed:
@@ -572,6 +637,7 @@ class Gateway:
                     row.get("country_code", ""),
                 )
                 self.nodes[node.id] = node
+                self.quality.ensure_node(node)
             node.username, node.password = row["username"], row["password"]
             if not row.get("valid", False):
                 if node.state == IPState.FRESH:
@@ -584,7 +650,24 @@ class Gateway:
                 candidates.append(node.id)
         return candidates
 
+    def collision(self, node):
+        return self.blacklist.get(node.ip, 0) > time.time() or any(
+            n.id != node.id
+            and n.ip == node.ip
+            and n.state in {IPState.FRESH, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
+            for n in self.nodes.values()
+        )
+
     async def _probe_candidates(self, ids: list[str]):
+        grouped = {}
+        for id in ids:
+            node = self.nodes[id]
+            if node.group_id != "default" and id not in self.quality.busy and id not in self.probing:
+                grouped.setdefault(node.group_id, []).append(id)
+        for group_id, members in grouped.items():
+            if group_id not in self.quality.running and self.quality.groups.get(group_id, {}).get("enabled"):
+                await self.quality.run(group_id, members[:100])
+        ids = [id for id in ids if self.nodes[id].group_id == "default"]
         if not self.config.probe_enabled:
             return
         semaphore = asyncio.Semaphore(self.settings.probe_concurrency)
@@ -599,7 +682,10 @@ class Gateway:
                 async with semaphore:
                     if not self.config.probe_enabled:
                         return
+                    started = time.monotonic()
                     healthy = await self.probe(copy.copy(node), self.settings.probe_timeout)
+                    elapsed_ms = (time.monotonic() - started) * 1000
+                    self.observer.probe(node, healthy, elapsed_ms)
                 results.append((node_id, healthy))
                 async with self.changed:
                     if not self.config.probe_enabled:
@@ -614,6 +700,9 @@ class Gateway:
                         for other in self.nodes.values()
                     )
                     node.checked_at = time.time()
+                    node.latency_ms = round(elapsed_ms, 2)
+                    if healthy:
+                        node.last_success_at = time.time()
                     node.state = IPState.FRESH if healthy and not collision else IPState.QUARANTINED
                     node.reason = (
                         "待分配"
@@ -676,11 +765,17 @@ class Gateway:
             await self._persist()
             self.changed.notify_all()
 
+    async def _observe(self):
+        while True:
+            await self.observer.flush(self)
+            await asyncio.sleep(5)
+
     async def _periodic(self):
         last_sync, last_probe = time.time(), time.time()
         while True:
             await asyncio.sleep(10)
             await self.maintain()
+            await self.quality.due()
             now = time.time()
             if now - last_sync >= self.settings.sync_interval:
                 await self.sync_all()
@@ -697,7 +792,11 @@ class Gateway:
     async def _replacement_loop(self):
         while True:
             await asyncio.sleep(1.5)
-            jobs = [job for job in self.replacements.values() if job.state not in {"COMPLETED", "FAILED"}]
+            jobs = [
+                job
+                for job in self.replacements.values()
+                if job.state in {"QUEUED", "PROCESSING", "RECONCILING"}
+            ]
             by_account = {}
             for job in sorted(jobs, key=lambda item: item.created_at):
                 by_account.setdefault(job.account_id, job)
@@ -715,8 +814,13 @@ class Gateway:
             if any(
                 other.account_id == job.account_id
                 and other.id != job.id
-                and other.state not in {"COMPLETED", "FAILED"}
-                and other.created_at < job.created_at
+                and (
+                    other.state == "UNCERTAIN"
+                    or (
+                        other.state in {"QUEUED", "SUBMITTING", "PROCESSING", "RECONCILING"}
+                        and other.created_at < job.created_at
+                    )
+                )
                 for other in self.replacements.values()
             ):
                 return
@@ -734,6 +838,14 @@ class Gateway:
                         return
                     rows = await provider.list_nodes()
                     if node.ip not in {row["proxy_address"] for row in rows}:
+                        if node.group_id != "default":
+                            async with self.changed:
+                                job.state, job.error = (
+                                    "UNCERTAIN",
+                                    "供应商外部变更，无法唯一继承分组席位；需对账",
+                                )
+                                await self._persist()
+                            return
                         async with self.changed:
                             job.state, node.state = "COMPLETED", IPState.ARCHIVED
                             ids = self._ingest(job.account_id, rows)
@@ -742,6 +854,19 @@ class Gateway:
                         return
                     async with self.changed:
                         self._writable()
+                        if (
+                            account.replacement_budget is not None
+                            and counts["submitted"] >= account.replacement_budget
+                        ):
+                            job.state, job.error = "BUDGET_BLOCKED", "账号本地预算已用尽"
+                            await self._persist()
+                            return
+                        reason = self.quality.budget_reason(node, job)
+                        if reason:
+                            job.state, job.error = "BUDGET_BLOCKED", reason
+                            await self._persist()
+                            return
+                        self.quality.debit(node, job)
                         job.before_ips = [row["proxy_address"] for row in rows]
                         job.state, job.attempts = "SUBMITTING", job.attempts + 1
                         counts["submitted"] += 1
@@ -794,6 +919,7 @@ class Gateway:
                             and n.ip == candidate_ip
                             and n.state != IPState.ARCHIVED
                         )
+                        self.quality.inherit(node, fresh)
                         collision = self.blacklist.get(fresh.ip, 0) > time.time() or any(
                             n.id != fresh.id and n.ip == fresh.ip and n.state != IPState.ARCHIVED
                             for n in self.nodes.values()
@@ -803,7 +929,9 @@ class Gateway:
                             self.counters[job.account_id]["redraws"] += 1
                         elif collision:
                             fresh.reason = "重复重抽上限，需人工核对"
-                        self.event("replacement", "上游替换完成", account_id=job.account_id)
+                        self.event(
+                            "replacement", "上游替换完成", account_id=job.account_id, group_id=job.group_id
+                        )
                         await self._persist()
                         self.changed.notify_all()
                     await self._probe_candidates(ids)
@@ -820,14 +948,14 @@ class Gateway:
                     self.event("error", "替换任务受阻", account_id=job.account_id, status=error.status)
                     await self._persist()
 
-    async def operation(self, key: str, fingerprint: str, kind: str, action):
+    async def operation(self, key: str, fingerprint: str, kind: str, action, group_id="", account_id=""):
         async with self.changed:
             self._writable()
             if existing := self.idempotency.get(key):
                 if existing["fingerprint"] != fingerprint:
                     raise GatewayError("IDEMPOTENCY_CONFLICT", "同一幂等键不能提交不同操作")
                 return self.operations[existing["id"]]
-            op = Operation(uid(), kind)
+            op = Operation(uid(), kind, group_id=group_id, account_id=account_id)
             self.operations[op.id] = op
             self.idempotency[key] = {"id": op.id, "fingerprint": fingerprint, "expires": time.time() + 86400}
             await self._persist()
@@ -883,14 +1011,29 @@ class Gateway:
             "generations": generations,
         }
 
-    def stats(self):
-        nodes = [n for n in self.nodes.values() if n.state != IPState.ARCHIVED]
+    def stats(self, account_id="", group_id=""):
+        nodes = [
+            n
+            for n in self.nodes.values()
+            if n.state != IPState.ARCHIVED
+            and (not account_id or n.account_id == account_id)
+            and (not group_id or n.group_id == group_id)
+        ]
+
+        def matches(binding):
+            node = self.nodes.get(binding.node_id)
+            return (not group_id or binding.group_id == group_id) and (
+                not account_id or (node and node.account_id == account_id)
+            )
+
+        bindings = [b for b in self.bindings.values() if matches(b)]
+        tunnels = [t for t in self.tunnels.values() if matches(self.bindings[t["binding_id"]])]
         counts = Counter(n.state for n in nodes)
         countries = {}
         for node in nodes:
             item = countries.setdefault(node.country, {"total": 0, "fresh": 0, "in_use": 0})
             item["total"] += 1
-            item["fresh"] += node.state == IPState.FRESH and self.accounts[node.account_id].enabled
+            item["fresh"] += self._fresh_eligible(node)
             item["in_use"] += node.state == IPState.IN_USE
         return {
             "total_ips": len(nodes),
@@ -900,9 +1043,9 @@ class Gateway:
             "quarantined_count": counts[IPState.QUARANTINED],
             "replacing_count": counts[IPState.REPLACING],
             "blacklist_count": sum(expiry > time.time() for expiry in self.blacklist.values()),
-            "active_bindings": sum(not b.released for b in self.bindings.values()),
+            "active_bindings": sum(not b.released for b in bindings),
             "binding_limit": self.active_limit(),
-            "active_connections": len(self.tunnels),
+            "active_connections": len(tunnels),
             "waiters": self.waiters,
             "countries": countries,
             "bytes_up": self.bytes_up,
@@ -912,7 +1055,10 @@ class Gateway:
             "probe_enabled": self.config.probe_enabled,
             "at": time.time(),
             "replacement_pending": sum(
-                j.state not in {"COMPLETED", "FAILED"} for j in self.replacements.values()
+                j.state not in {"COMPLETED", "FAILED"}
+                and (not account_id or j.account_id == account_id)
+                and (not group_id or j.group_id == group_id)
+                for j in self.replacements.values()
             ),
         }
 
@@ -922,6 +1068,7 @@ class Gateway:
             and self.accounts[node.account_id].enabled
             and self.account_health.get(node.account_id, {}).get("state") == "healthy"
             and self.blacklist.get(node.ip, 0) <= time.time()
+            and self.quality.eligible(node)
         )
 
     def public_accounts(self):
@@ -953,6 +1100,10 @@ class Gateway:
             for key, value in values.items():
                 if key == "probe_enabled":
                     self.config.probe_enabled = value
+                elif key == "connection_log_mode":
+                    self.observer.mode = value
+                elif key == "quality_daily_limit":
+                    self.quality.global_daily_limit = value
                 else:
                     setattr(self.settings, key, value)
             self.event("settings", "网关设置已更新", fields=list(values))

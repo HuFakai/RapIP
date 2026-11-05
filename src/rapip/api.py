@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .api_v2 import register as register_v2
 from .config import Account, Config
 from .connection import build_connection
 from .gateway import Gateway
@@ -72,6 +73,8 @@ class AccountPatch(Model):
 
 
 class SettingsPatch(Model):
+    connection_log_mode: Literal["off", "errors", "all"] | None = None
+    quality_daily_limit: int | None = Field(default=None, ge=0, le=100000)
     probe_enabled: bool | None = None
     pool_wait_timeout: float | None = Field(default=None, ge=0.1, le=30)
     drain_timeout: float | None = Field(default=None, ge=1, le=3600)
@@ -84,6 +87,8 @@ class SettingsPatch(Model):
 
 
 class ConnectionInput(Model):
+    tunnel: bool = False
+    group_id: str = Field(default="default", pattern=r"^[A-Za-z0-9]{1,32}$")
     host: str | None = Field(default=None, min_length=1, max_length=253)
     worker_id: str | None = Field(default="01", pattern=r"^[A-Za-z0-9]{1,64}$")
     session_id: str = Field(pattern=r"^[A-Za-z0-9]{1,64}$")
@@ -167,7 +172,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -286,14 +291,38 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
 
     @app.post(prefix + "/connection-config", dependencies=[Depends(auth)])
     async def connection_config(body: ConnectionInput, request: Request):
+        if body.group_id not in gateway.quality.groups:
+            raise GatewayError("NOT_FOUND", "分组不存在", 404)
         host = body.host or config.public_proxy_host or request.url.hostname or "127.0.0.1"
         try:
-            return build_connection(config, host, body.worker_id, body.session_id, body.country_code)
+            return build_connection(
+                config, host, body.worker_id, body.session_id, body.country_code, body.group_id, body.tunnel
+            )
         except ValueError as error:
             raise GatewayError("INVALID_CONNECTION_CONFIG", str(error), 422) from None
 
     @app.get(prefix + "/nodes", dependencies=[Depends(auth)])
-    async def nodes(request: Request, state: str = "", country: str = "", account_id: str = "", q: str = ""):
+    async def nodes(
+        request: Request,
+        state: str = "",
+        country: str = "",
+        account_id: str = "",
+        q: str = "",
+        group_id: str = "",
+        quality: str = "",
+        sort: Literal[
+            "ip", "latency_ms", "checked_at", "fail_count", "created_at", "state", "account_id"
+        ] = "ip",
+        direction: Literal["asc", "desc"] = "asc",
+    ):
+        import ipaddress
+
+        network = None
+        if "/" in q:
+            try:
+                network = ipaddress.ip_network(q, strict=False)
+            except ValueError:
+                raise HTTPException(422, "IP/CIDR 格式无效") from None
         rows = [
             n.public()
             for n in gateway.nodes.values()
@@ -301,9 +330,31 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
             and (not state or n.state == state)
             and (not country or n.country == country.upper())
             and (not account_id or n.account_id == account_id)
-            and (not q or q.lower() in f"{n.ip} {n.account_id}".lower())
+            and (not group_id or n.group_id == group_id)
+            and (not quality or gateway.quality.state(n) == quality)
+            and (
+                not q
+                or (network and ipaddress.ip_address(n.ip) in network)
+                or (not network and q.lower() in f"{n.ip} {n.account_id} {n.id}".lower())
+            )
         ]
-        return page(sorted(rows, key=lambda n: (n["account_id"], n["ip"])), *pagination(request))
+        for row in rows:
+            row["connections"] = gateway._count_node(row["id"])
+            row["worker"] = (
+                gateway.bindings[row["binding_id"]].worker
+                if row.get("binding_id") in gateway.bindings
+                else None
+            )
+            row["quality"] = {**row["quality"], "state": gateway.quality.state(gateway.nodes[row["id"]])}
+
+        def key(row):
+            value = row.get(sort)
+            if sort == "ip":
+                address = ipaddress.ip_address(row["ip"])
+                return (address.version, int(address))
+            return (value is None, value if value is not None else 0)
+
+        return page(sorted(rows, key=key, reverse=direction == "desc"), *pagination(request))
 
     @app.get(prefix + "/accounts", dependencies=[Depends(auth)])
     async def accounts():
@@ -345,11 +396,12 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         return {"ok": True}
 
     @app.get(prefix + "/bindings", dependencies=[Depends(auth)])
-    async def bindings(request: Request, q: str = "", include_released: bool = False):
+    async def bindings(request: Request, q: str = "", include_released: bool = False, group_id: str = ""):
         rows = [
             gateway.public_binding(b)
             for b in gateway.bindings.values()
             if (include_released or not b.released)
+            and (not group_id or b.group_id == group_id)
             and (not q or q.lower() in f"{b.worker or ''} {b.session}".lower())
         ]
         return page(sorted(rows, key=lambda b: b["created_at"], reverse=True), *pagination(request))
@@ -368,7 +420,18 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         fingerprint = hashlib.sha256(
             (request.url.path + json.dumps(body, sort_keys=True)).encode()
         ).hexdigest()
-        op = await gateway.operation(key, fingerprint, kind, action)
+        group_id, account_id = "", ""
+        if match := re.search(r"/groups/([A-Za-z0-9]+)(?:/|$)", request.url.path):
+            if match[1] in gateway.quality.groups:
+                group_id = match[1]
+        elif kind == "group_create":
+            group_id = body.get("group_id", "")
+        elif match := re.search(r"/bindings/([A-Za-z0-9]+)/", request.url.path):
+            if binding := gateway.bindings.get(match[1]):
+                group_id = binding.group_id
+                if node := gateway.nodes.get(binding.node_id):
+                    account_id = node.account_id
+        op = await gateway.operation(key, fingerprint, kind, action, group_id, account_id)
         return JSONResponse(asdict(op), status_code=202)
 
     @app.post(prefix + "/bindings/{binding_id}/rotate", dependencies=[Depends(auth)])
@@ -381,8 +444,9 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         )
 
     @app.post(prefix + "/rotate/{worker_id}", dependencies=[Depends(auth)])
-    async def rotate_worker(worker_id: str, body: Rotation, request: Request):
-        item = gateway.binding_for(f"owner:worker:{worker_id}")
+    async def rotate_worker(worker_id: str, body: Rotation, request: Request, group_id: str = "default"):
+        prefix = "owner" if group_id == "default" else f"owner:group:{group_id}"
+        item = gateway.binding_for(f"{prefix}:worker:{worker_id}")
         if not item:
             raise HTTPException(404, "工位不存在")
         return await rotate(item.id, body, request)
@@ -403,12 +467,14 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         request: Request,
         worker_id: str | None = None,
         anonymous: bool = False,
+        group_id: str = "default",
     ):
         items = [
             b
             for b in gateway.bindings.values()
             if not b.released
             and b.session == session_id
+            and b.group_id == group_id
             and ((anonymous and b.worker is None) or (worker_id and b.worker == worker_id))
         ]
         if len(items) != 1:
@@ -423,17 +489,33 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         return asdict(item)
 
     @app.get(prefix + "/tasks", dependencies=[Depends(auth)])
-    async def tasks(request: Request):
+    async def tasks(
+        request: Request, account_id: str = "", group_id: str = "", state: str = "", category: str = ""
+    ):
         rows = [{**asdict(op), "category": "operation"} for op in gateway.operations.values()]
         rows += [
             {**asdict(job), "category": "replacement", "kind": "replacement"}
             for job in gateway.replacements.values()
         ]
+        rows = [
+            r
+            for r in rows
+            if (not account_id or r.get("account_id") == account_id)
+            and (not group_id or r.get("group_id") == group_id)
+            and (not state or r["state"] == state)
+            and (not category or r["category"] == category)
+        ]
         return page(sorted(rows, key=lambda item: item["created_at"], reverse=True), *pagination(request))
 
     @app.get(prefix + "/events", dependencies=[Depends(auth)])
-    async def events(request: Request):
-        return page(list(reversed(gateway.events)), *pagination(request))
+    async def events(request: Request, account_id: str = "", group_id: str = ""):
+        rows = [
+            e
+            for e in reversed(gateway.events)
+            if (not account_id or e.get("account_id") == account_id)
+            and (not group_id or e.get("group_id") == group_id)
+        ]
+        return page(rows, *pagination(request))
 
     @app.post(prefix + "/sync", dependencies=[Depends(auth)])
     async def sync(request: Request):
@@ -451,7 +533,12 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
     @app.get(prefix + "/settings", dependencies=[Depends(auth)])
     async def settings():
         return {
-            "values": {**gateway.settings.public(), "probe_enabled": config.probe_enabled},
+            "values": {
+                **gateway.settings.public(),
+                "probe_enabled": config.probe_enabled,
+                "connection_log_mode": gateway.observer.mode,
+                "quality_daily_limit": gateway.quality.global_daily_limit,
+            },
             "source": "持久化配置覆盖默认值",
             "deployment": {
                 "socks_host": config.socks_host,
@@ -467,13 +554,15 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "cookie_secure": config.cookie_secure,
                 "egress_mode": "configured_proxy" if config.egress_proxy else "direct",
                 "tunnel_idle_timeout": 0,
-                "version": "0.1.0",
+                "version": "0.2.0",
             },
         }
 
     @app.patch(prefix + "/settings", dependencies=[Depends(auth)])
     async def patch_settings(body: SettingsPatch):
         return {"values": await gateway.update_settings(body.model_dump(exclude_none=True))}
+
+    register_v2(app, gateway, auth, operate)
 
     @app.get("/{path:path}", include_in_schema=False)
     async def frontend(path: str):

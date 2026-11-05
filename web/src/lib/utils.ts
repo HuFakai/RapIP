@@ -15,6 +15,15 @@ export function bytes(value: number) {
   return `${(value / 1024 ** index).toFixed(1)} ${["B", "KB", "MB", "GB"][index]}`;
 }
 export const labels: Record<string, string> = {
+  group_create: "创建资源组",
+  group_update: "更新组策略",
+  group_members: "调整组成员",
+  group_delete: "删除资源组",
+  quality_preview: "只读质量预览",
+  quality_check: "质量筛查准入",
+  quality_round: "新筛选轮次",
+  read_only_probe: "单节点只读探测",
+
   FRESH: "可分配",
   IN_USE: "使用中",
   DRAINING: "排空中",

@@ -24,19 +24,31 @@ def normalize_host(value: str) -> str:
         return encoded.lower()
 
 
-def build_connection(config: Config, host: str, worker: str | None, session: str, country: str | None):
+def build_connection(
+    config: Config,
+    host: str,
+    worker: str | None,
+    session: str,
+    country: str | None,
+    group: str = "default",
+    tunnel: bool = False,
+):
     host = normalize_host(host)
     authority = f"[{host}]" if ":" in host else host
     username = config.socks_user
     if country:
         username += f"-country-{country}"
+    if group != "default":
+        username += f"-group-{group}"
     if worker:
         username += f"-worker-{worker}"
     username += f"-session-{session}"
     if len(username.encode()) > 255:
         raise ValueError("完整代理用户名不能超过 255 字节，请缩短工位或会话 ID")
-    socks_port = config.public_socks_port or config.socks_port
-    http_port = config.public_http_proxy_port or config.proxy_http_port
+    socks_port = config.socks_port if tunnel else (config.public_socks_port or config.socks_port)
+    http_port = (
+        config.proxy_http_port if tunnel else (config.public_http_proxy_port or config.proxy_http_port)
+    )
     credentials = f"{quote(username, safe='')}:{quote(config.socks_password, safe='')}"
     socks_server, http_server = f"{authority}:{socks_port}", f"{authority}:{http_port}"
     guide = f"""# RapIP 代理接入说明（可直接交给 AI；不含真实密码或 API Token）
@@ -47,7 +59,9 @@ def build_connection(config: Config, host: str, worker: str | None, session: str
 SOCKS5 端口：{socks_port}；HTTP/HTTPS CONNECT 代理端口：{http_port}
 基础用户：{config.socks_user}
 代理密码：<PROXY_PASSWORD>（由使用者另行提供，和管理员密码、Webshare Key 不同）
+当前资源组：{group}
 当前示例用户名：{username}
+按组路由：{config.socks_user}-group-{group}-worker-01-session-a1b2c3。省略 group 使用 default 组；不同组资源不混用。
 
 用户名规则：
 1. {config.socks_user}-worker-01-session-a1b2c3
@@ -69,17 +83,18 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 - 改变 worker 的 session 会申请新 IP，旧 session 立即失效，不要让迟到请求切回旧 ID。
 - 管理页面支持“保留 session 换 IP”，客户端用户名可不变。
 - graceful 让旧 TCP 排空，新连接走新出口；hard 立即关闭旧 TCP，由客户端重连。
-- 没有符合国家条件的热备时，默认等待最多 5 秒后失败；客户端应有界退避，不抢占其他工位。
+- 没有符合国家条件的热备时，等待最多 {config.settings.pool_wait_timeout:g} 秒后失败；客户端应有界退避，不抢占其他工位。
 - 目标域名交给上游解析；curl 使用 socks5h://。已建立的 TCP/TLS/WebSocket 流不重放、不迁移。
 - 标准 Chromium 不支持 SOCKS5 账密时使用 HTTP 代理入口及代理认证。
 
 可选管理 API：管理页面同源 /api/v1，脚本需 Bearer <ADMIN_TOKEN>，不要使用代理密码代替 Token。
-POST /api/v1/rotate/<worker_id>，请求头 Idempotency-Key: <UNIQUE_OPERATION_ID>。
+POST /api/v1/rotate/<worker_id>?group_id={group}，请求头 Idempotency-Key: <UNIQUE_OPERATION_ID>。
 请求体 {{"session_policy":"keep","mode":"graceful"}}，可额外传 expected_generation 防止过期操作。
 返回 202 和 operation id；GET /api/v1/operations/<id> 查询结果。重试同一操作使用同一幂等键。
 """
     return {
         "host": host,
+        "group_id": group,
         "username": username,
         "socks_port": socks_port,
         "http_port": http_port,
@@ -87,6 +102,18 @@ POST /api/v1/rotate/<worker_id>，请求头 Idempotency-Key: <UNIQUE_OPERATION_I
             "socks5": f"socks5://{credentials}@{socks_server}",
             "socks5h": f"socks5h://{credentials}@{socks_server}",
             "http": f"http://{credentials}@{http_server}",
+        },
+        "structured": {
+            "http": {
+                "server": f"http://{http_server}",
+                "username": username,
+                "password": config.socks_password,
+            },
+            "socks5": {
+                "server": f"socks5://{socks_server}",
+                "username": username,
+                "password": config.socks_password,
+            },
         },
         "ai_guide": guide,
     }
