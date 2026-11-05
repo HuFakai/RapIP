@@ -406,3 +406,20 @@ async def test_legacy_unsubmitted_idle_replacement_is_paused_on_migration(gatewa
         assert gateway.test_provider.calls == 0
     finally:
         await recovered.stop()
+
+
+async def test_recovery_cancels_uncommitted_orphan_but_preserves_waiting_manual(gateway):
+    import copy
+
+    from rapip.rotation import RotationManager
+
+    allowance(gateway)
+    await gateway.rotation.save("default", RotationPolicy(enabled=True, daily_limit=3, total_limit=3))
+    nodes = list(gateway.nodes.values())
+    orphan = gateway.rotation.reserve(nodes[0], "scheduled")
+    waiting = gateway.rotation.reserve(nodes[1], "manual")
+    gateway.rotation.requests["waiting"] = {"reservation_id": waiting, "state": "WAITING"}
+    manager = RotationManager(gateway)
+    manager.load(copy.deepcopy(gateway.rotation.snapshot()))
+    assert manager.ledger[orphan]["state"] == "CANCELLED"
+    assert manager.ledger[waiting]["state"] == "RESERVED"

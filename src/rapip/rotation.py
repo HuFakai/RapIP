@@ -91,6 +91,10 @@ class RotationManager:
     def load(self, data):
         for name in ("policies", "ledger", "previews", "requests"):
             setattr(self, name, data.get(name, {}))
+        waiting = {r["reservation_id"] for r in self.requests.values() if r["state"] == "WAITING"}
+        for record in self.ledger.values():
+            if record["state"] == "RESERVED" and not record.get("committed") and record["id"] not in waiting:
+                record["state"] = "CANCELLED"  # crash before atomic switch: no supplier POST occurred
 
     def snapshot(self):
         return {k: getattr(self, k) for k in ("policies", "ledger", "previews", "requests")}
