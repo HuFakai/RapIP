@@ -13,6 +13,7 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { CountryFlag } from "../CountryFlag";
 import {
+  AccountLabel,
   GroupLabel,
   ErrorMessage,
   Pages,
@@ -282,7 +283,9 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                     <CountryFlag code={n.country} />
                     {n.country || "—"}
                   </span>
-                  <small>{n.account_id}</small>
+                  <small>
+                    <AccountLabel id={n.account_id} />
+                  </small>
                 </td>
                 {has("group") && (
                   <td>
@@ -402,7 +405,9 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                 <GroupLabel id={current.group_id} />
               </dd>
               <dt>账号</dt>
-              <dd>{current.account_id}</dd>
+              <dd>
+                <AccountLabel id={current.account_id} showId />
+              </dd>
               <dt>当前原因</dt>
               <dd>{current.reason}</dd>
               <dt>稳定资源席位</dt>

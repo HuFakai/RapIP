@@ -915,3 +915,211 @@ body {
   margin: 0;
   padding: 0 2px;
 }
+/* Clearly bounded actions across the workspace, including former ghost buttons. */
+.button-ghost {
+  background: #ffffff08;
+  border-color: #ffffff1e;
+  color: #c7d1df;
+}
+.button-ghost:hover:not(:disabled) {
+  background: #ffffff12;
+  border-color: #ffffff32;
+  color: #f1f5fb;
+}
+.button-secondary {
+  background: #ffffff09;
+  border-color: #ffffff20;
+}
+.button-danger {
+  color: #ffc0cc;
+  background: #ac3f581b;
+  border: 1px solid #df73933d;
+}
+.button-danger:hover:not(:disabled) {
+  background: #ac3f5835;
+  border-color: #df739370;
+}
+.button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.account-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-heading > .button-ghost {
+  margin-left: 0;
+}
+.account-notes {
+  margin: -8px 25px 22px;
+  font-size: 14px;
+  color: #b8c6d9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.account-notes > span {
+  display: inline-block;
+  color: #92add3;
+  font-size: 12px;
+  border: 1px solid #84b5ff25;
+  background: #84b5ff08;
+  border-radius: 4px;
+  padding: 1px 7px;
+  margin-right: 9px;
+}
+.account-metrics strong.account-quota-value {
+  font-size: 23px;
+  line-height: 1.3;
+  color: #b1ccf6;
+  overflow-wrap: anywhere;
+}
+.account-metrics > div:nth-child(4) strong.account-quota-value {
+  color: #bda6f2;
+}
+.quota-metric-help {
+  color: #8e9eb5;
+  font-size: 12px;
+  margin-top: 9px;
+}
+.supplier-sync-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 25px 20px;
+  padding-top: 15px;
+  border-top: 1px solid #ffffff0e;
+}
+.supplier-sync-line > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #9caec5;
+  font-size: 12px;
+}
+.account-local-budget {
+  border-top: 1px solid #ffffff0e;
+}
+.account-local-budget > summary {
+  padding: 15px 25px;
+  font-size: 13px;
+  color: #9babc1;
+  cursor: pointer;
+}
+.account-local-budget > summary > span {
+  color: #c1cddf;
+  margin-left: 12px;
+}
+.account-name {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 210px;
+  overflow-wrap: anywhere;
+  color: #b2c4dd;
+}
+.account-name small {
+  font-size: 12px;
+  color: #8093ad;
+}
+.form-stack textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  background: #111419;
+  color: #d5dfed;
+  font-size: 14px;
+  resize: vertical;
+}
+.overview-quota-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.overview-quota-card {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 7px 20px;
+  padding: 17px 20px;
+  border-radius: 9px;
+  border: 1px solid #84b5ff29;
+  background: linear-gradient(105deg, #84b5ff0b, #151920 80%);
+  text-align: left;
+  cursor: pointer;
+}
+.overview-quota-card > span {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 14px;
+  color: #b0c6e9;
+}
+.overview-quota-card > strong {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  color: #a8cbff;
+  font-size: 26px;
+  line-height: 1.3;
+  letter-spacing: -0.6px;
+}
+.overview-quota-card small {
+  font-size: 12px;
+  color: #849ab9;
+  margin-left: 7px;
+}
+.overview-quota-card p {
+  font-size: 12px;
+  color: #8ea1bc;
+}
+.overview-quota-card:hover {
+  border-color: #84b5ff60;
+}
+.quota-traffic {
+  background: linear-gradient(105deg, #baa0f40b, #151920 80%);
+  border-color: #baa0f429;
+}
+.quota-traffic > strong {
+  color: #c4adf6;
+}
+.quota-overview-note {
+  color: #8494aa;
+  font-size: 12px;
+  margin: 0 0 14px;
+  line-height: 1.6;
+}
+@media (max-width: 1100px) {
+  .overview-quota-card {
+    grid-template-columns: 1fr;
+  }
+  .overview-quota-card > strong {
+    grid-column: 1;
+    grid-row: auto;
+    font-size: 24px;
+  }
+}
+@media (max-width: 720px) {
+  .account-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .account-actions .button {
+    flex: 1;
+  }
+  .supplier-sync-line {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .overview-quota-row {
+    grid-template-columns: 1fr;
+  }
+  .account-metrics strong.account-quota-value {
+    font-size: 20px;
+  }
+}

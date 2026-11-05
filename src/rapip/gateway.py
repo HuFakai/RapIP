@@ -18,6 +18,7 @@ from .models import Binding, GatewayError, IPState, Node, Operation, Replacement
 from .observability import Observability
 from .provider import ProviderError, Webshare
 from .quality import QualityManager
+from .quotas import public_usage
 from .retention import RetentionPolicy
 from .socks import probe_node
 from .storage import Storage
@@ -51,6 +52,8 @@ class Gateway:
         self.events: list[dict] = []
         self.counters: dict[str, dict] = {}
         self.account_health: dict[str, dict] = {}
+        self.supplier_usage: dict[str, dict] = {}
+        self.usage_locks: dict[str, asyncio.Lock] = {}
         self.tunnels: dict[str, dict] = {}
         self.tasks: set[asyncio.Task] = set()
         self.probing: set[str] = set()
@@ -81,7 +84,15 @@ class Gateway:
             ("operations", Operation),
         ):
             setattr(self, name, {key: model(**value) for key, value in state.get(name, {}).items()})
-        for name in ("blacklist", "retired", "events", "counters", "idempotency", "removed_accounts"):
+        for name in (
+            "blacklist",
+            "retired",
+            "events",
+            "counters",
+            "idempotency",
+            "removed_accounts",
+            "supplier_usage",
+        ):
             if name in state:
                 setattr(self, name, state[name])
         for key, value in state.get("settings", {}).items():
@@ -191,7 +202,15 @@ class Gateway:
             },
             **{
                 name: getattr(self, name)
-                for name in ("blacklist", "retired", "events", "counters", "idempotency", "removed_accounts")
+                for name in (
+                    "blacklist",
+                    "retired",
+                    "events",
+                    "counters",
+                    "idempotency",
+                    "removed_accounts",
+                    "supplier_usage",
+                )
             },
             "settings": {**self.settings.public(), "probe_enabled": self.config.probe_enabled},
         }
@@ -579,10 +598,40 @@ class Gateway:
             return self.settings.auto_failover
 
     async def sync_all(self):
-        for index, account_id in enumerate(self.accounts):
+        for index, account_id in enumerate(list(self.accounts)):
             if index:
                 await asyncio.sleep(0.35)
             await self.sync_account(account_id)
+            await self.sync_usage(account_id)
+
+    async def sync_usage(self, account_id, force=False):
+        async with self.usage_locks.setdefault(account_id, asyncio.Lock()):
+            account = self.accounts.get(account_id)
+            provider = self.providers.get(account_id)
+            if not account or not provider or not hasattr(provider, "usage"):
+                return {"available": False, "error": "检测源暂不支持套餐用量查询"}
+            old = self.supplier_usage.get(account_id, {})
+            if time.time() - old.get("last_attempt", 0) < (15 if force else 300):
+                return public_usage(old)
+            try:
+                async with asyncio.timeout(40):
+                    snapshot = await provider.usage()
+            except (ProviderError, TimeoutError, ValueError, KeyError, TypeError):
+                snapshot = {
+                    **old,
+                    "last_attempt": time.time(),
+                    "error": "套餐用量查询失败；检查 API 权限或稍后重试",
+                }
+            async with self.changed:
+                self._writable()
+                if (
+                    self.accounts.get(account_id) is not account
+                    or self.providers.get(account_id) is not provider
+                ):
+                    return {"available": False, "error": "账号配置已变化，请重新同步"}
+                self.supplier_usage[account_id] = snapshot
+                await self._persist()
+            return public_usage(snapshot)
 
     async def sync_account(self, account_id: str):
         async with self.account_locks[account_id]:
@@ -1132,7 +1181,8 @@ class Gateway:
                     for n in self.nodes.values()
                 ),
                 "usage": self.counters[account.account_id],
-                "budget_source": "本地配置，非供应商实时余额",
+                "budget_source": "本地安全限制，独立于供应商套餐额度",
+                "supplier_usage": public_usage(self.supplier_usage.get(account.account_id)),
             }
             for account in self.accounts.values()
         ]

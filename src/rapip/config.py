@@ -27,6 +27,7 @@ def private_json(path: Path, value: object) -> None:
 class Account:
     account_id: str
     name: str = "Webshare"
+    notes: str = ""
     api_key_env: str = ""
     enabled: bool = True
     replacement_country: str = "original"

@@ -30,7 +30,14 @@ import {
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { CountryFlag } from "../CountryFlag";
-import { ErrorMessage, Pages, Refresh, Status, Time } from "./Common";
+import {
+  AccountLabel,
+  ErrorMessage,
+  Pages,
+  Refresh,
+  Status,
+  Time,
+} from "./Common";
 
 function PolicyFields({
   policy,
@@ -757,7 +764,7 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                           <span className="mono">{n.ip}</span>
                         </span>
                         <span className="quality-ip-account">
-                          {n.account_id}
+                          <AccountLabel id={n.account_id} />
                         </span>
                         <span>
                           {unavailable ? (

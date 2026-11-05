@@ -98,6 +98,7 @@ export interface Metrics {
   peak: number;
 }
 export interface OverviewData {
+  supplier_totals: import("./quotas").SupplierTotals;
   stats: Stats;
   metrics: Metrics;
   accounts: (AccountData & { scoped_total: number; scoped_fresh: number })[];

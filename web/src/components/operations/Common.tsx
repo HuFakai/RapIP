@@ -155,13 +155,48 @@ export function Time({ value }: { value?: number | null }) {
   return <span className="ops-time">{value ? date(value) : "—"}</span>;
 }
 
+const AccountNames = createContext<Record<string, string>>({});
 const GroupNames = createContext<Group[] | undefined>(undefined);
 export function GroupNamesProvider({ children }: { children: ReactNode }) {
   const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
+  const accounts = useQuery<{
+    items: AccountData[];
+    archived_names?: Record<string, string>;
+  }>("/accounts", true, 15000);
+  const names = {
+    ...accounts.data?.archived_names,
+    ...Object.fromEntries(
+      (accounts.data?.items ?? []).map((account) => [
+        account.account_id,
+        account.name,
+      ]),
+    ),
+  };
   return (
-    <GroupNames.Provider value={groups.data?.items}>
-      {children}
-    </GroupNames.Provider>
+    <AccountNames.Provider value={names}>
+      <GroupNames.Provider value={groups.data?.items}>
+        {children}
+      </GroupNames.Provider>
+    </AccountNames.Provider>
+  );
+}
+export function AccountLabel({
+  id,
+  showId = false,
+}: {
+  id?: string | null;
+  showId?: boolean;
+}) {
+  const names = useContext(AccountNames);
+  if (!id) return <span>—</span>;
+  return (
+    <span
+      className="account-name"
+      title={`${names[id] ?? "未识别账号"} / ${id}`}
+    >
+      <span>{names[id] ?? "未识别账号"}</span>
+      {showId && <small className="mono">{id}</small>}
+    </span>
   );
 }
 export function GroupLabel({

@@ -23,7 +23,7 @@ from .config import Account, Config
 from .connection import build_connection
 from .gateway import Gateway
 from .http_proxy import HttpProxy
-from .models import GatewayError, IPState
+from .models import GatewayError, IPState, uid
 from .provider import ProviderError
 from .retention import RetentionPolicy
 from .socks import SocksServer
@@ -57,7 +57,8 @@ class Release(Model):
 
 
 class AccountInput(Model):
-    account_id: str = Field(pattern=r"^[A-Za-z0-9]{1,32}$")
+    notes: str = Field(default="", max_length=500)
+    account_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]{1,32}$")
     name: str = Field(min_length=1, max_length=64)
     api_key: str = Field(min_length=16, max_length=256, repr=False)
     replacement_budget: int | None = Field(default=None, ge=0)
@@ -67,6 +68,7 @@ class AccountInput(Model):
 
 
 class AccountPatch(Model):
+    notes: str | None = Field(default=None, max_length=500)
     api_key: str | None = Field(default=None, min_length=16, max_length=256, repr=False)
     traffic_limit_gb: int | None = Field(default=None, ge=0)
 
@@ -179,7 +181,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.3", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.4", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -365,11 +367,19 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
 
     @app.get(prefix + "/accounts", dependencies=[Depends(auth)])
     async def accounts():
-        return {"items": gateway.public_accounts()}
+        return {
+            "items": gateway.public_accounts(),
+            "archived_names": {key: value["name"] for key, value in gateway.removed_accounts.items()},
+        }
 
     @app.post(prefix + "/accounts", dependencies=[Depends(auth)], status_code=201)
-    async def add_account(body: AccountInput):
+    async def add_account(body: AccountInput, request: Request):
         async with config_lock:
+            if body.account_id is None:
+                key = request.headers.get("idempotency-key", "")
+                body.account_id = "a" + (
+                    hashlib.sha256(("account:" + key).encode()).hexdigest()[:12] if key else uid()[:12]
+                )
             if body.account_id in gateway.accounts or body.account_id in gateway.removed_accounts:
                 raise GatewayError("ACCOUNT_EXISTS", "账号 ID 已存在或已留档，请使用新 ID")
             account = Account(**body.model_dump(exclude={"api_key"}))
@@ -379,8 +389,21 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
             except ProviderError:
                 raise GatewayError("ACCOUNT_VALIDATION_FAILED", "API Key 或套餐验证失败", 400) from None
             await gateway.save_account(account, body.api_key)
-        gateway.spawn(gateway.sync_account(account.account_id), "account-sync")
+
+        async def sync_added():
+            await gateway.sync_account(account.account_id)
+            await gateway.sync_usage(account.account_id)
+
+        gateway.spawn(sync_added(), "account-sync")
         return {"account_id": account.account_id, "status": "syncing"}
+
+    @app.post(prefix + "/accounts/{account_id}/refresh-usage", dependencies=[Depends(auth)])
+    async def refresh_usage(account_id: str, request: Request):
+        if account_id not in gateway.accounts:
+            raise HTTPException(404, "账号不存在")
+        return await operate(
+            request, "account_usage_sync", {}, lambda: gateway.sync_usage(account_id, force=True)
+        )
 
     @app.patch(prefix + "/accounts/{account_id}", dependencies=[Depends(auth)])
     async def patch_account(account_id: str, body: AccountPatch):
@@ -487,7 +510,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 group_id = match[1]
         elif kind == "group_create":
             group_id = body.get("group_id", "")
-        elif match := re.search(r"/accounts/([A-Za-z0-9]+)$", request.url.path):
+        elif match := re.search(r"/accounts/([A-Za-z0-9]+)(?:/|$)", request.url.path):
             account_id = match[1]
         elif match := re.search(r"/nodes/([A-Za-z0-9]+)/", request.url.path):
             if node := gateway.nodes.get(match[1]):
@@ -621,7 +644,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "cookie_secure": config.cookie_secure,
                 "egress_mode": "configured_proxy" if config.egress_proxy else "direct",
                 "tunnel_idle_timeout": 0,
-                "version": "0.2.3",
+                "version": "0.2.4",
             },
         }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Activity,
+  RefreshCw as RefreshIcon,
   ArrowDownLeft,
   ArrowUpRight,
   ArrowUpRight as OpenIcon,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@/lib/api";
 import { queryString, type OverviewData } from "@/lib/v2";
+import { quotaPair, trafficPair } from "@/lib/quotas";
 import { bytes } from "@/lib/utils";
 import { Button } from "../ui/button";
 import { Chart } from "./Chart";
@@ -261,6 +263,60 @@ export function Overview({
         </div>
       </div>
       <ErrorMessage message={query.error || d?.metrics.error} />
+      <div className="overview-quota-row">
+        <button
+          className="overview-quota-card quota-replacements"
+          onClick={() => onNavigate("accounts")}
+        >
+          <span>
+            <RefreshIcon size={17} />
+            IP 更换额度
+          </span>
+          <strong>
+            {quotaPair(
+              d?.supplier_totals?.replacement.remaining,
+              d?.supplier_totals?.replacement.total,
+            )}
+            <small>次</small>
+          </strong>
+          <p>
+            剩余额度 / 总额度 ·{" "}
+            {d?.supplier_totals?.replacement.complete
+              ? "所有账号已同步"
+              : "仅汇总已同步套餐，可能不完整"}
+          </p>
+        </button>
+        <button
+          className="overview-quota-card quota-traffic"
+          onClick={() => onNavigate("accounts")}
+        >
+          <span>
+            <Gauge size={17} />
+            套餐总流量
+          </span>
+          <strong>
+            {d?.supplier_totals?.traffic.unlimited_plans
+              ? "包含不限量套餐"
+              : trafficPair(
+                  d?.supplier_totals?.traffic.remaining_bytes,
+                  d?.supplier_totals?.traffic.total_bytes,
+                )}
+          </strong>
+          <p>
+            剩余流量 / 总流量 ·{" "}
+            {d?.supplier_totals?.traffic.complete
+              ? "所有账号已同步"
+              : "仅汇总已同步套餐，可能不完整"}
+          </p>
+        </button>
+      </div>
+      <p className="quota-overview-note">
+        按所选账号的完整套餐汇总，质量分组不拆分套餐额度；重复套餐去重。
+        {d?.supplier_totals?.oldest_checked_at
+          ? `最早同步 ${new Date(d.supplier_totals.oldest_checked_at * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`
+          : "等待供应商同步"}{" "}
+        · 用量按小时聚合
+      </p>
       <div className="ops-kpis">
         {cards.map((c) => (
           <button
@@ -409,7 +465,7 @@ export function Overview({
                   <th>账号</th>
                   <th>状态</th>
                   <th>可分配 / 总量</th>
-                  <th>本地替换</th>
+                  <th>剩余更换 / 总额</th>
                 </tr>
               </thead>
               <tbody>
@@ -436,7 +492,10 @@ export function Overview({
                       {a.scoped_total}
                     </td>
                     <td>
-                      {a.usage.submitted} / {a.replacement_budget ?? "未限额"}
+                      {quotaPair(
+                        a.supplier_usage?.replacement?.remaining,
+                        a.supplier_usage?.replacement?.total,
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -455,7 +514,7 @@ export function Overview({
               展示 {d?.accounts.length ?? "—"} / {d?.accounts_total ?? "—"}{" "}
               个账号
             </span>
-            <span>计数为网关本地记录，非供应商余额</span>
+            <span>更换额度来自供应商套餐快照，非本地提交计数</span>
           </div>
         </section>
         <section className="surface ops-panel">

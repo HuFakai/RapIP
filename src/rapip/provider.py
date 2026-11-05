@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import random
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import aiohttp
 
 from .config import Account
+from .quotas import normalize_usage, timestamp
 
 
 class ProviderError(Exception):
@@ -64,6 +66,27 @@ class Webshare:
             rows.extend(data["results"])
             url, params = data.get("next"), None
         return rows
+
+    async def usage(self):
+        subscription = await self.request("GET", "/api/v2/subscription/", params=self.plan())
+        plan_id = self.account.plan_id or subscription["plan"]
+        if not str(plan_id).isdigit():
+            raise ValueError("invalid supplier plan")
+        plan = await self.request("GET", f"/api/v2/subscription/plan/{plan_id}/")
+        if str(plan.get("id")) != str(plan_id) or str(subscription.get("plan")) != str(plan_id):
+            raise ValueError("active subscription does not match configured plan")
+        now = datetime.now(timezone.utc)
+        end = min(now, timestamp(subscription.get("end_date")))
+        stats = await self.request(
+            "GET",
+            "/api/v2/stats/aggregate/",
+            params={
+                "plan_id": plan_id,
+                "timestamp__gte": subscription["start_date"],
+                "timestamp__lte": end.isoformat(),
+            },
+        )
+        return normalize_usage(subscription, plan, stats, now.timestamp())
 
     async def replace(self, ip: str, country: str) -> str:
         selection = (

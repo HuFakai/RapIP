@@ -3,6 +3,7 @@ import { useQuery, type EventData, type Paged, type TaskData } from "@/lib/api";
 import { queryString } from "@/lib/v2";
 import { labels } from "@/lib/utils";
 import {
+  AccountLabel,
   GroupLabel,
   ErrorMessage,
   Pages,
@@ -148,7 +149,9 @@ export function Tasks() {
                   </td>
                   <td>
                     <GroupLabel id={t.group_id} />
-                    <small>{t.account_id ?? "—"}</small>
+                    <small>
+                      <AccountLabel id={t.account_id} />
+                    </small>
                   </td>
                   <td>
                     <span
@@ -195,7 +198,9 @@ export function Tasks() {
             <Time value={e.at} />
             <b>{e.kind.toUpperCase()}</b>
             <span>{e.message}</span>
-            <small>{e.account_id ?? ""}</small>
+            <small>
+              <AccountLabel id={e.account_id} />
+            </small>
           </div>
         ))}
       </section>

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 
 from .models import GatewayError, IPState, uid
 from .quality import QualityPolicy
+from .quotas import aggregate_usage
 
 
 class Model(BaseModel):
@@ -342,6 +343,7 @@ def register(app, gateway, auth, operate):
             "stats": stats,
             "metrics": metrics,
             "accounts": accounts[:8],
+            "supplier_totals": aggregate_usage(accounts),
             "accounts_total": len(accounts),
             "groups": groups,
             "events": events[:6],

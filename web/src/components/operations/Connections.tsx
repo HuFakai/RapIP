@@ -4,6 +4,7 @@ import { queryString, type ConnectionRecord } from "@/lib/v2";
 import { bytes } from "@/lib/utils";
 import { Dialog } from "../ui/dialog";
 import {
+  AccountLabel,
   GroupLabel,
   ErrorMessage,
   Pages,
@@ -300,7 +301,9 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
                 <div className="ops-dl-row" key={k}>
                   <dt>{k}</dt>
                   <dd>
-                    {k === "资源组" ? (
+                    {k === "账号" ? (
+                      <AccountLabel id={selected.account_id} showId />
+                    ) : k === "资源组" ? (
                       <GroupLabel id={selected.group_id} />
                     ) : (
                       v || "—"

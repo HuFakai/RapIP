@@ -48,6 +48,7 @@ import {
   type Stats,
   type TaskData,
 } from "./lib/api";
+import { quotaPair, trafficPair, packageBytes } from "./lib/quotas";
 import { date, labels } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
@@ -111,7 +112,7 @@ const navigation = [
     id: "accounts",
     label: "上游账号",
     icon: Globe2,
-    caption: "Webshare 资源与本地预算",
+    caption: "Webshare 账号、备注与套餐用量",
   },
   {
     id: "tasks",
@@ -480,8 +481,8 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
     setError("");
     const form = new FormData(event.currentTarget);
     const body = {
-      account_id: form.get("account_id"),
       name: form.get("name"),
+      notes: String(form.get("notes") || "").trim(),
       api_key: form.get("api_key"),
       replacement_budget: form.get("replacement_budget")
         ? Number(form.get("replacement_budget"))
@@ -496,6 +497,23 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+  const [syncing, setSyncing] = useState("");
+  async function refreshUsage(item: AccountData) {
+    setSyncing(item.account_id);
+    try {
+      const result = await operation(
+        `/accounts/${item.account_id}/refresh-usage`,
+      );
+      refreshAll();
+      notify(
+        result.error ? String(result.error) : "供应商套餐额度与流量已同步",
+      );
+    } catch (err) {
+      notify((err as Error).message);
+    } finally {
+      setSyncing("");
     }
   }
   async function toggle(item: AccountData) {
@@ -524,6 +542,7 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
         `/accounts/${editing.account_id}`,
         {
           name: String(form.get("name")).trim(),
+          notes: String(form.get("notes") || "").trim(),
           traffic_limit_gb: form.get("traffic_limit_gb")
             ? Number(form.get("traffic_limit_gb"))
             : null,
@@ -601,39 +620,48 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
                 </span>
               </div>
               <Badge state={item.health.state} />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setError("");
-                  setEditing(item);
-                }}
-              >
-                <Settings2 size={15} />
-                编辑
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`删除账号 ${item.name}`}
-                onClick={() => {
-                  setRemoving(item);
-                  setConfirmation("");
-                  setError("");
-                }}
-              >
-                <Trash2 size={14} />
-                删除
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void toggle(item)}
-              >
-                {item.enabled ? <Pause size={14} /> : <Play size={14} />}
-                {item.enabled ? "暂停新分配" : "恢复分配"}
-              </Button>
+              <div className="account-actions">
+                {" "}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setError("");
+                    setEditing(item);
+                  }}
+                >
+                  <Settings2 size={15} />
+                  编辑
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  aria-label={`删除账号 ${item.name}`}
+                  onClick={() => {
+                    setRemoving(item);
+                    setConfirmation("");
+                    setError("");
+                  }}
+                >
+                  <Trash2 size={14} />
+                  删除
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void toggle(item)}
+                >
+                  {item.enabled ? <Pause size={14} /> : <Play size={14} />}
+                  {item.enabled ? "暂停新分配" : "恢复分配"}
+                </Button>
+              </div>
             </div>
+            {item.notes && (
+              <p className="account-notes">
+                <span>备注</span>
+                {item.notes}
+              </p>
+            )}
             <div className="account-metrics">
               <div>
                 <span>受管 IP</span>
@@ -650,41 +678,99 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
                 </strong>
               </div>
               <div>
-                <span>本地替换提交</span>
-                <strong>
-                  {item.usage.submitted}
-                  <small>/ {item.replacement_budget ?? "不限"}</small>
+                <span>供应商更换额度 · 剩余 / 总额</span>
+                <strong className="account-quota-value">
+                  {quotaPair(
+                    item.supplier_usage?.replacement?.remaining,
+                    item.supplier_usage?.replacement?.total,
+                  )}
+                  <small>次</small>
                 </strong>
+                <p className="quota-metric-help">
+                  已用 {item.supplier_usage?.replacement?.used ?? "—"} 次
+                  {item.supplier_usage?.stale ? " · 待更新" : ""}
+                </p>
               </div>
               <div>
-                <span>套餐流量 · 手动配置</span>
-                <strong>
-                  {item.traffic_limit_gb ?? "—"}
-                  <small>GB</small>
+                <span>套餐流量 · 剩余 / 总量</span>
+                <strong className="account-quota-value">
+                  {item.supplier_usage?.traffic?.unlimited
+                    ? "不限量"
+                    : trafficPair(
+                        item.supplier_usage?.traffic?.remaining_bytes,
+                        item.supplier_usage?.traffic?.total_bytes,
+                      )}
                 </strong>
+                <p className="quota-metric-help">
+                  本期已用{" "}
+                  {packageBytes(item.supplier_usage?.traffic?.used_bytes)}
+                </p>
               </div>
             </div>
-            <div className="account-budget">
+            <div className="supplier-sync-line">
               <div>
-                <span>本地替换预算</span>
-                <span>
-                  {item.replacement_budget !== null
-                    ? `${Math.max(0, item.replacement_budget - item.usage.submitted).toLocaleString()} 次可用`
-                    : "未设上限"}
+                <span
+                  className={`ops-status tone-${item.supplier_usage?.stale ? "warn" : "good"}`}
+                >
+                  {item.supplier_usage?.stale
+                    ? "套餐数据待更新"
+                    : "Webshare API"}
                 </span>
+                <span>
+                  {item.supplier_usage?.checked_at
+                    ? `同步 ${date(item.supplier_usage.checked_at)}`
+                    : "尚未同步套餐"}{" "}
+                  · 供应商用量按小时聚合
+                </span>
+                {item.supplier_usage?.error && (
+                  <span className="ops-warning">
+                    {item.supplier_usage.error}
+                  </span>
+                )}
               </div>
-              <div className="budget-track">
-                <i
-                  style={{
-                    width: `${item.replacement_budget ? Math.max(0, 1 - item.usage.submitted / item.replacement_budget) * 100 : 100}%`,
-                  }}
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!!syncing}
+                onClick={() => void refreshUsage(item)}
+              >
+                <RefreshCw
+                  size={13}
+                  className={syncing === item.account_id ? "spin" : ""}
                 />
-              </div>
-              <p>
-                成功补货 {item.usage.completed} 次 · 碰撞重抽{" "}
-                {item.usage.redraws} 次 · 非供应商实时余额
-              </p>
+                同步套餐
+              </Button>
             </div>
+            <details className="account-local-budget">
+              <summary>
+                本地安全预算与网关计数{" "}
+                <span>
+                  {item.usage.submitted} / {item.replacement_budget ?? "不限"}{" "}
+                  次
+                </span>
+              </summary>
+              <div className="account-budget">
+                <div>
+                  <span>本地替换预算</span>
+                  <span>
+                    {item.replacement_budget !== null
+                      ? `${Math.max(0, item.replacement_budget - item.usage.submitted).toLocaleString()} 次可用`
+                      : "未设上限"}
+                  </span>
+                </div>
+                <div className="budget-track">
+                  <i
+                    style={{
+                      width: `${item.replacement_budget ? Math.max(0, 1 - item.usage.submitted / item.replacement_budget) * 100 : 100}%`,
+                    }}
+                  />
+                </div>
+                <p>
+                  成功补货 {item.usage.completed} 次 · 碰撞重抽{" "}
+                  {item.usage.redraws} 次 · 非供应商实时余额
+                </p>
+              </div>
+            </details>
             <div className="account-footer">
               <span>{item.health.message}</span>
               <span>最近同步 {date(item.health.synced_at)}</span>
@@ -711,18 +797,21 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
         description="验证 API Key 后同步资源，密钥保存后不再回显。"
       >
         <form onSubmit={add} className="form-stack">
-          <label>
-            账号 ID
-            <input
-              name="account_id"
-              pattern="[A-Za-z0-9]{1,32}"
-              placeholder="例如 account02"
-              required
-            />
-          </label>
+          <p className="field-help">
+            账号 ID 自动生成，列表优先显示名称。套餐额度和流量会从 API 同步。
+          </p>
           <label>
             显示名称
             <input name="name" placeholder="例如 备用账号" required />
+          </label>
+          <label>
+            备注（选填）
+            <textarea
+              name="notes"
+              maxLength={500}
+              rows={3}
+              placeholder="例如：所属项目、采购渠道或使用说明"
+            />
           </label>
           <label>
             API Key
@@ -734,15 +823,24 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
               required
             />
           </label>
-          <label>
-            本地替换预算
-            <input
-              name="replacement_budget"
-              type="number"
-              min="0"
-              placeholder="留空不限制"
-            />
-          </label>
+          <details className="quality-advanced">
+            <summary>本地安全限制（选填）</summary>
+            <div className="quality-advanced-body">
+              {" "}
+              <label>
+                本地替换预算
+                <input
+                  name="replacement_budget"
+                  type="number"
+                  min="0"
+                  placeholder="留空不限制"
+                />
+              </label>
+              <p className="field-help">
+                这是本网关允许消耗的上限，独立于供应商剩余额度；留空不额外限制。
+              </p>
+            </div>
+          </details>
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -776,7 +874,16 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
               />
             </label>
             <label>
-              套餐流量记录（GB，手动配置）
+              备注（选填）
+              <textarea
+                name="notes"
+                maxLength={500}
+                rows={3}
+                defaultValue={editing.notes ?? ""}
+              />
+            </label>
+            <label>
+              套餐流量备用记录（GB）
               <input
                 name="traffic_limit_gb"
                 type="number"
@@ -786,6 +893,10 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
                 placeholder="留空表示未记录"
               />
             </label>
+            <p className="field-help">
+              套餐真实额度与已用量由 API
+              同步；下方预算和流量备用记录仅作为本地限制/说明，不覆盖供应商数据。
+            </p>
             <label>
               本地替换预算
               <input
@@ -1438,7 +1549,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.3</span>
+            <span className="version-tag">v0.2.4</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">

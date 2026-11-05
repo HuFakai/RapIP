@@ -219,6 +219,8 @@ export interface Stats {
   countries: Record<string, { total: number; fresh: number; in_use: number }>;
 }
 export interface AccountData {
+  notes: string;
+  supplier_usage: import("./quotas").SupplierUsage;
   account_id: string;
   name: string;
   enabled: boolean;

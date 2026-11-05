@@ -2,7 +2,9 @@
 
 import json
 import tempfile
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -11,6 +13,7 @@ from rapip.api import create_app
 from rapip.config import Config
 from rapip.gateway import Gateway
 from rapip.models import Route
+from rapip.quotas import normalize_usage
 
 
 class Provider:
@@ -31,6 +34,25 @@ class Provider:
 
     async def list_nodes(self):
         return [dict(row) for row in self.rows]
+
+    async def usage(self):
+        now = time.time()
+        return normalize_usage(
+            {
+                "id": 1 if self.rows else 2,
+                "plan": 1 if self.rows else 2,
+                "start_date": datetime.fromtimestamp(now - 86400, timezone.utc).isoformat(),
+                "end_date": datetime.fromtimestamp(now + 29 * 86400, timezone.utc).isoformat(),
+            },
+            {
+                "id": 1 if self.rows else 2,
+                "bandwidth_limit": 250,
+                "proxy_replacements_total": 1000 if self.rows else 500,
+                "proxy_replacements_used": 1 if self.rows else 0,
+                "proxy_replacements_available": 999 if self.rows else 500,
+            },
+            {"bandwidth_total": 5_000_000},
+        )
 
     async def replace(self, ip, country):
         self.counter += 1
@@ -61,6 +83,7 @@ def main():
                     {
                         "account_id": "qa",
                         "name": "浏览器验证 · 模拟账号",
+                        "notes": "项目 A · 采购渠道说明",
                         "replacement_budget": 2500,
                         "traffic_limit_gb": 250,
                     },
