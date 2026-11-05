@@ -12,3 +12,4 @@ web/dist
 .ruff_cache
 test-results
 playwright-report
+.rapip-deploy.lock

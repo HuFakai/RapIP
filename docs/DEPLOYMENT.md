@@ -1,141 +1,174 @@
 # 实际部署与验收
 
-更新日期：2026-11-05。本文面向独立 Linux 服务器，使用 Docker Compose。服务器应能直接连接 Webshare 节点；当前开发电脑本身使用 Webshare 落地，不作为真实连通验收环境。
+更新日期：2026-11-05。推荐独立 Linux 服务器 + Docker Compose。服务器应能直接连接 Webshare 节点；当前开发电脑本身使用 Webshare 落地，不作为真实出口验收环境。
 
 ## 1. 准备项目
 
-服务器只需安装 Git 和带 Compose 插件的 Docker。参见 [Docker 官方安装文档](https://docs.docker.com/engine/install/)。Python、Node 和依赖安装均在镜像构建中完成，宿主机无需安装 Python、Node 或 uv。
+服务器需要 Git、Docker Engine、支持 `--wait-timeout` 的 Compose v2 插件、OpenSSL，以及 `ss` 或 `lsof`（端口检测）。宿主机无需 Python、Node 或 uv。Docker 安装见 [官方文档](https://docs.docker.com/engine/install/)。脚本检查依赖和 Docker 访问权限，不自动安装系统组件。
 
 ```sh
 git clone https://github.com/HuFakai/RapIP.git
 cd RapIP
-# 仅首次部署复制；已有 .env 时保留原文件。
-cp .env.example .env
-chmod 600 .env
 ```
 
-`cd RapIP` 只是进入包含 `compose.yaml` 的项目目录。编辑 `.env`，必须将以下三个占位值替换为各自独立的长随机值，然后再启动容器：
+## 2. 一键启动服务
 
-- `RAPIP_ADMIN_PASSWORD`：管理页面登录密码。
-- `RAPIP_SOCKS_PASSWORD`：SOCKS5 与 HTTP 入口共用的代理密码。
-- `RAPIP_ADMIN_TOKEN`：脚本调用管理 API 的 Token。
-
-例如运行 `nano .env` 编辑；建议使用至少 32 位随机字母数字。首次无需创建 `accounts.json`，启动后在页面添加账号，服务会创建并保存私有配置。`scripts/setup.py` 是本地开发的可选初始化工具，Docker 部署不需要执行。
-
-## 2. 配置端口与地址
-
-修改 `.env`。三个端口分别控制管理页面、SOCKS5 和 HTTP 代理，不要使用相同端口：
-
-```dotenv
-RAPIP_HTTP_PORT=8080
-RAPIP_SOCKS_PORT=1080
-RAPIP_PROXY_HTTP_PORT=8888
-
-# 默认只发布到服务器本机；推荐经 SSH 隧道或受保护网络接入。
-RAPIP_ADMIN_BIND_IP=127.0.0.1
-RAPIP_PROXY_BIND_IP=127.0.0.1
-
-# 填写客户端实际可达的代理 IP 或域名，无需协议和端口。
-# 留空时，连接配置弹窗默认使用当前页面的主机名，也可在弹窗中修改。
-RAPIP_PUBLIC_PROXY_HOST=
-
-# 仅当公网 NAT / 反向端口映射与实际监听端口不同时填写。
-RAPIP_PUBLIC_SOCKS_PORT=
-RAPIP_PUBLIC_HTTP_PROXY_PORT=
-
-RAPIP_COOKIE_SECURE=false
-RAPIP_PROBE_ENABLED=true
-```
-
-Compose 会将同一个端口值用于容器监听、宿主机映射及健康检查。只修改 `.env` 即可改端口，无需编辑 Compose 或 Dockerfile；例如改为 `18080 / 11080 / 18888`，生成的代理链接也会使用正确端口。
-
-原生运行时监听地址由 `RAPIP_HTTP_HOST`、`RAPIP_SOCKS_HOST`、`RAPIP_PROXY_HTTP_HOST` 控制。容器内部自动监听 `0.0.0.0`，宿主机发布范围由上述 `*_BIND_IP` 控制，两者职责不同。
-
-需要代理端口直接供远程客户端访问时，将 `RAPIP_PROXY_BIND_IP=0.0.0.0`，并在服务器网络规则中限制来源。管理入口可以继续只绑定本机；如果经域名反向代理提供 HTTPS 管理页，再设置 `RAPIP_COOKIE_SECURE=true`。普通 HTTP 或 SSH 转发到 HTTP 的场景保持 false。
-
-## 3. 启动服务
+在项目目录执行同一个入口：
 
 ```sh
-docker compose config --quiet
-docker compose up -d --build
+bash scripts/deploy.sh
+```
+
+脚本会自动完成：
+
+1. 拉取当前分支最新代码（`git pull --ff-only`）。源码有未提交修改或拉取失败时停止，不覆盖本地修改、不停止旧服务。
+2. 没有 `.env` 时按中文模板生成配置，分别生成管理员密码、代理密码、管理 API Token，均为独立的 48 位随机字母数字（十六进制字符）。
+3. 检测系统 TCP 监听及 Docker 已发布的端口，从 `20000–29999` 随机选择三个互不相同的空闲端口；不会停止其他程序。
+4. 已有 `.env` 时保留原密码、端口、账号和数据，直接更新；即使上次启动失败，也不会重新生成凭据。已有数据却丢失 `.env` 时要求恢复原文件。
+5. 校验 Compose，先构建镜像，再重建网关并等待最多 180 秒的容器健康检查。构建失败时不会主动停止旧容器；启动/健康检查失败时不显示成功。
+6. 成功后在终端展示管理地址、三种端口、管理员凭据、代理凭据、API Token、完整示例链接、SSH 隧道命令和后续操作。相同信息另存于 `data/DEPLOYMENT_ACCESS.txt`。
+
+`.env` 和信息文件包含真实凭据，脚本自动以仅所有者可读写的方式创建，不需要额外执行权限设置命令。不要公开终端截图或信息文件；私有配置、数据和部署信息均被 Git 忽略。
+
+首次无需提前复制 `.env`、手工生成密码或创建 `accounts.json`。账号启动后通过页面添加。脚本不自动开放防火墙，也不自动查询公网 IP；默认三个端口仅发布到服务器本机，按终端输出的 SSH 命令从客户端访问。
+
+端口检测到容器绑定之间仍有短暂竞争窗口；若另一程序恰好抢占端口，Docker 会报错，脚本不会显示部署成功。检查占用后修改 `.env` 的对应端口再重跑，不会自动改动已生成的配置。
+
+## 3. 更新与重启（启动之后）
+
+已部署后，在项目目录再次执行：
+
+```sh
+bash scripts/deploy.sh
+```
+
+脚本自动拉取源码、重新构建并强制重建容器，保留 `.env`、`config/` 和 `data/`。即使没有新提交也会重建容器；已有长连接会断开，客户端需要重连。按网关恢复规则，旧业务节点恢复时可能退役并创建真实补货任务，应避开业务高峰。
+
+只使用当前已下载的源码部署或修改 `.env` 后重建，不拉取 Git：
+
+```sh
+bash scripts/deploy.sh --no-pull
+```
+
+手工更新的等价流程：
+
+```sh
+git pull --ff-only
+docker compose up -d --build --force-recreate --wait --wait-timeout 180
+```
+
+查看状态与日志：
+
+```sh
 docker compose ps
 docker compose logs --tail=100 gateway
 ```
 
-`config --quiet` 校验配置且不输出密钥。不要把完整的 `docker compose config` 或 `.env` 内容发到公开渠道。
+更新不自动删除卷、重置数据库或重新生成凭据，也不提供自动回滚。启动失败请查看日志修复后重跑；不要通过删除 `data/` 解决。部署锁 `.rapip-deploy.lock/` 防止同时执行；若机器断电或进程被强杀留下锁目录，先确认没有部署进程，再移除残留目录。
 
-默认绑定本机时，可在客户端电脑建立 SSH 隧道（以下为默认服务器端口）：
+## 4. 参数说明、端口与手工部署
+
+[.env.example](../.env.example) 已逐项提供中文说明。一键生成的 `.env` 保留相同说明；更新已有文件时不重写其内容。当前开发机 `.env` 也已补齐中文说明，原凭据及端口保持不变。未来模板新增参数时，可参照模板手工补充已有 `.env`。
+
+需要手工配置而不使用脚本时，仅首次复制模板：
+
+```sh
+cp .env.example .env
+```
+
+用习惯的文件编辑器修改 `.env` 中三个 `replace-with-...` 占位值，分别使用不同的随机值。终端快速生成 **32 位随机字母数字**：
+
+```sh
+openssl rand -hex 16
+```
+
+输出为 32 位十六进制字符（`0–9`、`a–f`），属于字母数字；运行三次分别用于管理员密码、代理密码和 API Token。一键脚本使用 `openssl rand -hex 24` 生成 48 位值。含 `$`、`#` 或空格的自定义值应使用单引号包住。
+
+手工启动命令：
+
+```sh
+docker compose config --quiet
+docker compose up -d --build --wait --wait-timeout 180
+```
+
+`config --quiet` 校验配置而不输出密钥；不要公开完整 `docker compose config` 或 `.env`。直接使用模板占位密码不会自动变安全，一键脚本会拒绝这些占位值。
+
+常用参数：
+
+| 参数 | 用途 |
+| --- | --- |
+| `RAPIP_HTTP_PORT` | 管理页面/API 端口，同时用于容器监听、宿主机映射与健康检查 |
+| `RAPIP_SOCKS_PORT` | SOCKS5 入口端口 |
+| `RAPIP_PROXY_HTTP_PORT` | HTTP/HTTPS CONNECT 代理入口端口 |
+| `RAPIP_ADMIN_BIND_IP` | 管理端口发布范围，默认 `127.0.0.1` |
+| `RAPIP_PROXY_BIND_IP` | 两个代理端口发布范围，默认 `127.0.0.1` |
+| `RAPIP_PUBLIC_PROXY_HOST` | 客户端可达的代理 IP/域名，无协议和端口；留空使用页面主机名 |
+| `RAPIP_PUBLIC_SOCKS_PORT` / `RAPIP_PUBLIC_HTTP_PROXY_PORT` | NAT 对外端口与实际监听不同时填写，留空沿用监听端口 |
+| `RAPIP_COOKIE_SECURE` | HTTPS 管理页设 true，HTTP 或 SSH 隧道设 false |
+| `RAPIP_PROBE_ENABLED` | 首次主动测活默认值，持久化后的页面设置优先 |
+
+三个监听端口不得相同，范围 `1–65535`。手工默认值为 `8080 / 1080 / 8888`；一键部署选择的实际端口以 `.env` 和成功信息为准。修改后运行 `bash scripts/deploy.sh --no-pull`。
+
+原生监听地址由 `RAPIP_HTTP_HOST`、`RAPIP_SOCKS_HOST`、`RAPIP_PROXY_HTTP_HOST` 控制。容器内部由 Compose 固定监听 `0.0.0.0`，宿主机发布范围由 `*_BIND_IP` 控制。
+
+远程直接使用代理时，将 `RAPIP_PROXY_BIND_IP=0.0.0.0`，设置客户端可达的 `RAPIP_PUBLIC_PROXY_HOST`，并按实际选定端口配置服务器安全组/防火墙的允许来源。管理入口可继续只绑定本机，或经 HTTPS 反向代理提供。
+
+## 5. 远程访问、添加账号与连接
+
+脚本会按实际端口展示 SSH 转发命令。以下仅为手工默认端口示例，在客户端电脑运行：
 
 ```sh
 ssh -N -L 18080:127.0.0.1:8080 -L 1080:127.0.0.1:1080 -L 8888:127.0.0.1:8888 user@YOUR_SERVER_IP
 ```
 
-浏览器打开 `http://127.0.0.1:18080`。此时代理也经隧道连接到客户端本机 1080/8888。若更改了服务器端口，相应修改隧道目标端口。
+打开 `http://127.0.0.1:18080`。`user` 和服务器地址按实际替换；一键部署请使用终端输出的端口，不要照搬本节默认端口。
 
-## 4. 添加账号与获取连接
+1. 用部署信息中的管理员凭据登录。
+2. “上游账号 → 添加账号”输入 Webshare API Key。Key 写入服务器私有配置，不回显；未添加账号时资源为空是正常情况。
+3. 在“网关设置”确认主动测活开启，等待节点准入后进入可分配状态。关闭测活不会自动信任未验证节点。
+4. “查看连接配置”填写客户端实际可达地址、工位、session 和国家，复制带密码的 SOCKS5 或 HTTP 链接。
+5. 客户端不支持 SOCKS5 账密时使用 HTTP 入口；HTTPS 目标同样配置 `http://` 代理，经 CONNECT 转发。
+6. AI 接入说明包含命名规范和生命周期，真实密码、管理员 Token 为占位符。
 
-1. 用 `.env` 中的管理员用户名、密码登录。
-2. “上游账号 → 添加账号”输入 Webshare API Key。Key 只写入服务器私有配置，不回显。
-3. 在“网关设置”确认主动测活已开启，等待节点通过准入后进入可分配状态。关闭测活不代表自动信任未验证节点。
-4. 总览“查看连接配置”填写客户端能访问的服务器地址、工位、session 和可选国家，复制带密码的完整 SOCKS5 或 HTTP 链接。
-5. 客户端不支持 SOCKS5 账密时使用 HTTP 链接；HTTPS 目标同样配置 `http://` 代理，由 CONNECT 转发。
-6. 需要 AI 帮助接入时，复制“AI 接入说明”。该说明包含命名规范和生命周期，真实密码与管理员 Token 为占位符。
+所有调度在一个网关进程执行，不要增加 Uvicorn workers 或 Compose replicas 来扩容同一个池。
 
-所有调度操作均在一个网关进程执行，不要通过增加 Uvicorn workers 或 Compose replicas 扩容同一个池。
+## 6. 测活与实测
 
-## 5. 测活设置优先级
+`RAPIP_PROBE_ENABLED` 仅是初始默认值。页面开关保存到 SQLite 后优先，重启仍生效。开启后立即检查未使用节点；关闭后不提交新的主动测活，在途结果不会因关闭而改变准入状态，不影响已建立业务连接。
 
-`RAPIP_PROBE_ENABLED` 是首次初始化的默认值。页面开关保存到 SQLite，重启后仍生效，并优先于该环境变量。升级已有数据目录时，请在页面确认实际开关状态。
-
-开启后立即检查未使用节点；关闭后不再提交新的主动测活，在途结果不会因关闭而改变准入状态，不影响已建立的业务连接。手动只读诊断命令仍按显式请求执行。
-
-## 6. 分步验收
-
-先检查服务存活，再同步账号和测活，最后验证代理与轮换。不要只看到 HTTP 200 就认为代理可用。
+脚本成功仅表示容器管理服务健康，真实供应商出口仍需验收：
 
 ```sh
-# 默认管理端口为 8080；自定义时替换此处端口。
-curl --fail http://127.0.0.1:8080/api/v1/health/live
-
 # 只读取列表，不分配会话、不换 IP。
 docker compose exec gateway python -m rapip.diagnostics --list-only
 
-# 经上游请求探测站点；会产生少量流量，不调用 Replace API。
+# 经上游访问探测站点；会产生少量流量，不调用 Replace API。
 docker compose exec gateway python -m rapip.diagnostics
 ```
 
-代理连通测试：从管理页复制生成的完整链接，填写到客户端或 curl 的 `--proxy` 参数；SOCKS curl 建议使用弹窗中的 socks5h 链接以便远程解析域名。
+从页面复制完整代理链接到业务客户端或 curl 的 `--proxy` 参数；curl SOCKS 建议用 `socks5h` 以便上游解析域名。先验证一个工位，再扩大规模。
 
-首次创建业务绑定后，该节点退出绑定、空闲回收或重启恢复都可能创建真实补货任务。真实轮换会消耗供应商额度；建议先验证一个工位，在任务页确认操作与上游补货分别完成，再扩大规模。
+创建业务绑定后的轮换、释放、空闲回收和重启恢复可能创建真实补货任务，消耗供应商额度。真实操作和上游补货分别在任务页确认完成。
 
-## 7. 改端口、升级与备份
+## 7. 备份与迁移
 
-修改端口或部署环境变量后重建容器使其生效：
+保留 `.env`、`config/` 和 `data/`，包含 `data/DEPLOYMENT_ACCESS.txt`。一致备份时先停止服务，再复制私有文件；不要只复制运行中的 SQLite 主文件而遗漏 WAL。停机/重启会断开长连接，并可能按恢复规则创建补货任务。
 
-```sh
-docker compose up -d --force-recreate
-```
+开发机 `data/` 不是新部署的默认数据。迁移需要完整停机复制，避免新旧实例同时管理同一批供应商账号。宿主机持久化路径由 Compose 挂载固定，容器内 `RAPIP_DATA_DIR=data`、`RAPIP_CONFIG_DIR=config` 请保留；改变路径必须同步修改挂载。
 
-源码升级：
-
-```sh
-git pull --ff-only
-docker compose up -d --build
-```
-
-保留 `.env`、`config/accounts.json`、`config/secrets.json`（存在时）和 `data/`。一致备份时先停止服务，再复制这些私有文件；不要只复制运行中的 SQLite 主文件而遗漏 WAL。停止/重启可能断开长连接，保守退役旧节点后会创建补货任务。
-
-不把开发机的 data 目录当作新部署的默认数据。需要迁移时完整停机复制，并避免新旧实例同时管理同一批供应商账号。
-
-## 8. 常见问题
+## 8. 常见问题与验证范围
 
 | 现象 | 检查方式 |
 | --- | --- |
-| 登录后立刻被退出 | 是否在 HTTP 环境错误启用了 Cookie Secure；检查客户端时间和实际 HTTPS 配置 |
-| 显示节点但可分配为 0 | 查看测活开关、节点原因、账号状态和国家筛选，使用独立网络执行只读诊断 |
-| 完整链接地址或端口不对 | 设置 PUBLIC_PROXY_HOST / PUBLIC_*_PORT，或在弹窗修正主机名；公网反向代理的页面域名不一定是代理地址 |
-| 当前电脑握手失败，其他服务器可用 | 检查是否以同一 Webshare 落地形成嵌套链路；不要据此批量替换节点 |
-| UNCERTAIN 任务阻塞账号补货 | 在供应商后台核对提交结果，不重复点击或重发 Replace 请求 |
-| 端口被占用 | 修改相应环境变量，重新创建容器；不要停止服务器上的无关进程 |
+| Docker 引擎/权限检查失败 | 启动 Docker，确保运行脚本的用户有 Docker 权限 |
+| Git 拉取失败 | 检查网络、当前分支上游和本地修改；不拉取可显式使用 `--no-pull` |
+| 已有账号或数据却没有 `.env` | 恢复原配置，脚本不会自动换密码接管旧数据 |
+| 构建或健康检查失败 | 查看 `docker compose logs --tail=100 gateway`；原配置与数据保留 |
+| 管理页面无法从外部打开 | 默认仅本机绑定，使用输出的 SSH 隧道；检查真实端口、安全组与绑定地址 |
+| 登录后立刻退出 | 普通 HTTP 是否误设 Cookie Secure=true |
+| 有节点但可分配为 0 | 检查测活开关、节点原因、账号状态、国家条件，并在独立网络只读诊断 |
+| 链接地址/端口不对 | 修正 PUBLIC_PROXY_HOST / PUBLIC_*_PORT 或页面弹窗的地址 |
+| 当前电脑握手失败，其他服务器可用 | 检查 Webshare 落地嵌套路径，不据此批量替换节点 |
+| UNCERTAIN 任务阻塞补货 | 供应商后台核对结果，不盲目重发 Replace 请求 |
 
-Docker 引擎构建和真实供应商换号仍需要在目标服务器执行；本地自动测试使用模拟供应商，不消耗真实更换额度。
+部署脚本的首次/更新、端口排除、凭据保留、构建/健康失败路径以模拟 Docker 自动测试覆盖。本机没有 Docker 引擎，尚未实际构建/启动容器；真实镜像、供应商连通及换号仍需在目标服务器验收。

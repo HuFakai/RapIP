@@ -6,31 +6,27 @@
 
 ## Docker 部署（推荐）
 
-服务器只需 Git、Docker 和 Compose，无需在宿主机安装 Python、Node 或 uv。首次部署：
+服务器需要 Git、Docker/Compose、OpenSSL 和 `ss` 或 `lsof`，无需宿主机 Python、Node 或 uv。首次部署：
 
 ```sh
 git clone https://github.com/HuFakai/RapIP.git
 cd RapIP
-cp .env.example .env
-chmod 600 .env
-nano .env
+bash scripts/deploy.sh
 ```
 
-将 `.env` 中 `RAPIP_ADMIN_PASSWORD`、`RAPIP_SOCKS_PASSWORD`、`RAPIP_ADMIN_TOKEN` 分别改为独立的长随机值，再构建并启动：
+脚本自动生成三份独立的 48 位随机凭据，排除系统监听与 Docker 发布端口，从 `20000–29999` 选择三个空闲端口，构建并等待容器健康。成功后输出地址、端口、凭据、完整代理链接和 SSH 隧道命令，另存于私有的 `data/DEPLOYMENT_ACCESS.txt`。无需提前复制或编辑 `.env`，首次在页面添加上游账号即可。
+
+部署后更新/重启仍使用同一个命令：
 
 ```sh
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=100 gateway
+bash scripts/deploy.sh
 ```
 
-后续更新无需重新复制 `.env`：`git pull --ff-only` 后运行 `docker compose up -d --build`。`cd RapIP` 只是进入 Compose 文件所在目录；Docker 部署无需执行 `python3 scripts/setup.py`。首次账号配置通过管理页面添加即可。
+已有 `.env` 时保留密码、端口、账号和数据，自动拉取源码后重新构建并重建容器。只使用本地源码、不拉取时运行 `bash scripts/deploy.sh --no-pull`。更新会断开已有长连接，恢复时可能按规则创建补货任务。
 
-默认管理端口仅绑定服务器本机，远程访问方法见 [部署文档](docs/DEPLOYMENT.md#3-启动服务)。
+默认只发布到服务器本机，使用输出的 SSH 命令访问；脚本不自动开放防火墙。三个端口通过 `RAPIP_HTTP_PORT`、`RAPIP_SOCKS_PORT`、`RAPIP_PROXY_HTTP_PORT` 配置，`.env.example` 与新生成 `.env` 均有逐项中文说明。终端生成 32 位随机字母数字可用 `openssl rand -hex 16`。手工部署、远程直连、备份及实测步骤见 [部署文档](docs/DEPLOYMENT.md)。
 
-Node 仅参与构建，生产 Python 容器提供静态页面、API 和两个代理入口。config/data 使用持久目录，停止宽限期为 150 秒；不要同时运行本机进程和容器管理同一数据目录。
-
-三个监听/发布端口及健康检查均由 `.env` 控制：`RAPIP_HTTP_PORT`、`RAPIP_SOCKS_PORT`、`RAPIP_PROXY_HTTP_PORT`。`RAPIP_ADMIN_BIND_IP` 与 `RAPIP_PROXY_BIND_IP` 分别控制 Docker 管理/代理发布地址；公网 NAT 使用 `RAPIP_PUBLIC_PROXY_HOST`、`RAPIP_PUBLIC_SOCKS_PORT`、`RAPIP_PUBLIC_HTTP_PROXY_PORT` 生成正确的客户端链接。修改部署端口后运行 `docker compose up -d --force-recreate`。完整参数、SSH 访问和实测步骤见 [部署文档](docs/DEPLOYMENT.md)。
+Node 仅参与镜像构建，生产 Python 容器提供页面、API 和两个代理入口。`config/`、`data/` 为持久目录，停止宽限期为 150 秒；不要同时运行本机进程和容器管理同一数据目录。
 
 ## 本地开发运行（可选）
 
