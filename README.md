@@ -114,7 +114,8 @@ npm run build
 
 ## 文档
 
-- [v0.2 升级计划：紧凑总览与运行观测（待讨论）](docs/V0.2_UPGRADE_PLAN.md)
+- [v0.2 升级计划：紧凑总览、运行观测与质量分组（待讨论）](docs/V0.2_UPGRADE_PLAN.md)
+- [IP 质量分组与自动准入方案（规划）](docs/IP_QUALITY_GROUPS_PLAN.md)
 - [项目规范](SPEC.md)
 - [技术方案](docs/TECHNICAL_DESIGN.md)
 - [管理页面](docs/ADMIN_UI_SPEC.md)

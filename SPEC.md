@@ -4,6 +4,8 @@
 
 本文件定义第一版的业务行为和验收要求。选型比较见 [技术方案](docs/TECHNICAL_DESIGN.md)，首版页面见 [管理页面规范](docs/ADMIN_UI_SPEC.md)，后续扩展见 [多用户升级方案](docs/MULTI_USER_UPGRADE.md)。
 
+下一版本新增“选择 IP 建立质量组、各组独立准入、失败后有预算地自动替换”的需求，见 [v0.2 升级计划](docs/V0.2_UPGRADE_PLAN.md)及 [IP 质量分组方案](docs/IP_QUALITY_GROUPS_PLAN.md)。该能力尚未实现，本文现有用户名格式和共享池描述仍是已发布版本行为；新组路由格式需随调度迁移一并发布。
+
 ## 1. 已确定事项与待定事项
 
 ### 1.1 用户已确定
