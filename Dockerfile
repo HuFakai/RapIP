@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash curl jq bc
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY pyproject.toml requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 COPY src/ ./src/
-RUN pip install --no-cache-dir -r requirements.lock && pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-deps .
 COPY --from=web /build/dist ./web/dist
 COPY THIRD_PARTY_NOTICES.md ./licenses/NOTICE.md
 COPY web/vendor/ ./licenses/

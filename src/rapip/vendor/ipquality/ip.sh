@@ -2425,7 +2425,7 @@ score_updates+=".Score |= . + { IP2LOCATION: \"${ip2location[score]:-null}\" } |
 score_updates+=".Score |= . + { SCAMALYTICS: \"${scamalytics[score]:-null}\" } | "
 score_updates+=".Score |= . + { ipapi: \"${ipapi[score]:-null}\" } | "
 score_updates+=".Score |= . + { AbuseIPDB: \"${abuseipdb[score]:-null}\" } | "
-score_updates+=".Score |= . + { IPQS: \"${ipapi[ipqs]:-null}\" } | "
+score_updates+=".Score |= . + { IPQS: \"${ipqs[score]:-null}\" } | "
 score_updates+=".Score |= . + { DBIP: \"${dbip[score]:-null}\" } | "
 factor_updates+=$(factor_bool "${ip2location[countrycode]}" "IP2LOCATION" "CountryCode")
 factor_updates+=$(factor_bool "${ipapi[countrycode]}" "ipapi" "CountryCode")

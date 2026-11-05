@@ -333,7 +333,9 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                       variant="secondary"
                       size="sm"
                       onClick={() => setReportNode(n)}
-                      disabled={!["FRESH", "QUARANTINED", "IN_USE"].includes(n.state)}
+                      disabled={
+                        !["FRESH", "QUARANTINED", "IN_USE"].includes(n.state)
+                      }
                       aria-label={`查看 IP ${n.ip} 质量报告`}
                     >
                       <FlaskConical size={13} />

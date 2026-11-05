@@ -33,6 +33,8 @@ db_maxmind 4
 db_ipinfo
 db_scamalytics 4
 db_ipapi 4
+# A missing raw score must not become 0% through upstream awk coercion.
+[[ "${ipapi[scorenum]:-}" =~ ^[0-9]+([.][0-9]+)?$ ]] || unset 'ipapi[score]'
 db_abuseipdb 4
 db_ip2location 4
 db_ipdata 4
