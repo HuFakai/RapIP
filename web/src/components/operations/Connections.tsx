@@ -98,7 +98,7 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
           >
             <option value="off">关闭</option>
             <option value="errors">仅失败（默认）</option>
-            <option value="all">全量 · 保留 24 小时</option>
+            <option value="all">全量 · 按保留策略清理</option>
           </select>
         </label>
       </div>

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { applyTheme, readTheme } from "./lib/theme";
 import "./style.css";
+import "./experience.css";
 
 applyTheme(readTheme());
 try {

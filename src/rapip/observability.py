@@ -13,6 +13,7 @@ from pathlib import Path
 import aiosqlite
 
 from .models import uid
+from .retention import RetentionPolicy
 
 COUNTERS = ("up", "down", "attempts", "successes", "failures", "probes", "probe_ok")
 RANGES = {"15m": 900, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}
@@ -32,6 +33,9 @@ class Observability:
         self.lock = asyncio.Lock()
         self.last_compact = 0
         self.source_status = {}
+        self.retention = RetentionPolicy()
+        self.last_cleanup = None
+        self.detail_paused = False
 
     async def open(self):
         try:
@@ -132,6 +136,9 @@ class Observability:
             self.enqueue("connection", {k: v for k, v in item.items() if not k.startswith("_")})
 
     def enqueue(self, kind, item):
+        if self.detail_paused:
+            self.dropped += 1
+            return
         if len(self.queue) == self.queue.maxlen:
             self.dropped += 1
         self.queue.append((kind, dict(item)))
@@ -161,7 +168,10 @@ class Observability:
             "dropped_records": self.dropped,
             "queued_records": len(self.queue),
             "sample_interval": 5,
-            "retention_days": 30,
+            "retention_days": self.retention.metrics_days,
+            "retention": self.retention.model_dump(),
+            "last_cleanup": self.last_cleanup,
+            "detail_paused": self.detail_paused,
             "sources": self.source_status,
         }
 
@@ -290,18 +300,62 @@ class Observability:
                 ),
             )
             await self.db.execute("DELETE FROM samples WHERE resolution=? AND bucket<?", (source, cutoff))
-        await self.db.execute("DELETE FROM samples WHERE bucket<?", (now - 2592000,))
         await self.db.execute(
-            "DELETE FROM records WHERE at<? OR (kind='connection' AND result='success' AND at<?)",
-            (now - 604800, now - 86400),
+            "DELETE FROM samples WHERE bucket<?", (now - self.retention.metrics_days * 86400,)
         )
-        await self.db.execute("""DELETE FROM records WHERE id IN
-            (SELECT id FROM records ORDER BY at DESC LIMIT -1 OFFSET 100000)""")
+        await self.db.execute(
+            """DELETE FROM records WHERE
+            (kind='probe' AND at<?) OR
+            (kind='connection' AND result!='success' AND at<?) OR
+            (kind='connection' AND result='success' AND at<?)""",
+            (
+                now - self.retention.probe_log_days * 86400,
+                now - self.retention.error_log_days * 86400,
+                now - self.retention.success_log_hours * 3600,
+            ),
+        )
+        await self.db.execute(
+            """DELETE FROM records WHERE id IN
+            (SELECT id FROM records ORDER BY at DESC LIMIT -1 OFFSET ?)""",
+            (self.retention.max_records,),
+        )
         await self.db.commit()
         # Stop collecting detail before an unbounded database can exhaust the server disk.
-        if (self.directory / "observability.sqlite3").stat().st_size > 256 * 1024 * 1024:
+        self.last_cleanup = now
+        async with self.db.execute("PRAGMA page_count") as cursor:
+            pages = (await cursor.fetchone())[0]
+        async with self.db.execute("PRAGMA freelist_count") as cursor:
+            free = (await cursor.fetchone())[0]
+        async with self.db.execute("PRAGMA page_size") as cursor:
+            page_size = (await cursor.fetchone())[0]
+        self.detail_paused = (pages - free) * page_size > self.retention.max_database_mb * 1024 * 1024
+        if self.detail_paused:
             self.mode = "off"
-            self.error = "观测库达到 256MiB 保护阈值，明细采集已暂停"
+            self.error = f"观测有效数据达到 {self.retention.max_database_mb}MiB 保护阈值，明细采集已暂停"
+
+    async def storage_status(self):
+        result = {
+            "policy": self.retention.model_dump(),
+            "last_cleanup": self.last_cleanup,
+            "database_bytes": sum(
+                p.stat().st_size for p in self.directory.glob("observability.sqlite3*") if p.is_file()
+            ),
+            "records": 0,
+            "samples": 0,
+            "reusable_bytes": 0,
+            "error": self.error,
+        }
+        if not hasattr(self, "db"):
+            return result
+        async with self.lock:
+            for table in ("records", "samples"):
+                async with self.db.execute(f"SELECT COUNT(*) FROM {table}") as cursor:
+                    result[table] = (await cursor.fetchone())[0]
+            async with self.db.execute("PRAGMA freelist_count") as cursor:
+                free = (await cursor.fetchone())[0]
+            async with self.db.execute("PRAGMA page_size") as cursor:
+                result["reusable_bytes"] = free * (await cursor.fetchone())[0]
+        return result
 
     async def metrics(self, window="1h", account="", group=""):
         seconds = RANGES.get(window, 3600)

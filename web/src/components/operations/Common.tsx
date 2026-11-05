@@ -30,7 +30,7 @@ const text: Record<string, string> = {
 export function Status({ state }: { state: string }) {
   return (
     <span
-      className={`ops-status tone-${state === "healthy" || state === "PASS" || state === "FRESH" || state === "success" ? "good" : state === "FAIL" || state === "ERROR" || state === "upstream_transport" ? "bad" : "neutral"}`}
+      className={`ops-status tone-${["healthy", "PASS", "success"].includes(state) ? "good" : ["FAIL", "ERROR", "upstream_transport", "upstream_target", "authentication_rejected", "upstream_authentication", "protocol_error"].includes(state) ? "bad" : ["UNKNOWN", "EXPIRED", "QUARANTINED", "POOL_EXHAUSTED", "DRAINING"].includes(state) ? "warn" : ["IN_USE", "REPLACING"].includes(state) ? "active" : state === "FRESH" || state === "BASIC" ? "ready" : "neutral"}`}
     >
       {text[state] || state}
     </span>

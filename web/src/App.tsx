@@ -52,6 +52,7 @@ import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { Nodes } from "./components/operations/Nodes";
+import { Retention } from "./components/operations/Retention";
 import { Groups, QualitySources } from "./components/operations/Groups";
 import { Connections } from "./components/operations/Connections";
 import { Tasks } from "./components/operations/Tasks";
@@ -830,6 +831,7 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
     <div className="page-enter">
       <AppearanceSettings />
       <QualitySources notify={notify} />
+      <Retention notify={notify} />
       <ErrorNote message={query.error} />
       {query.data && (
         <>
@@ -875,7 +877,7 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
                   <div>
                     <label htmlFor="connection_log_mode">连接明细记录</label>
                     <p>
-                      聚合指标始终采集，明细可关闭；全量成功记录保留 24 小时
+                      聚合指标始终采集，明细可关闭；保留期限在数据生命周期中设置
                     </p>
                   </div>
                   <select
@@ -1141,7 +1143,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <Brand />
-          <span className="version-tag">v0.2</span>
+          <span className="version-tag">v0.2.1</span>
         </div>
         <div className="workspace-label">WORKSPACE</div>
         <nav aria-label="主导航">

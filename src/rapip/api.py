@@ -25,6 +25,7 @@ from .gateway import Gateway
 from .http_proxy import HttpProxy
 from .models import GatewayError, IPState
 from .provider import ProviderError
+from .retention import RetentionPolicy
 from .socks import SocksServer
 
 
@@ -73,6 +74,7 @@ class AccountPatch(Model):
 
 
 class SettingsPatch(Model):
+    retention: RetentionPolicy | None = None
     connection_log_mode: Literal["off", "errors", "all"] | None = None
     quality_daily_limit: int | None = Field(default=None, ge=0, le=100000)
     probe_enabled: bool | None = None
@@ -172,7 +174,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.1", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -538,6 +540,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "probe_enabled": config.probe_enabled,
                 "connection_log_mode": gateway.observer.mode,
                 "quality_daily_limit": gateway.quality.global_daily_limit,
+                "retention": gateway.observer.retention.model_dump(),
             },
             "source": "持久化配置覆盖默认值",
             "deployment": {
@@ -554,13 +557,26 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "cookie_secure": config.cookie_secure,
                 "egress_mode": "configured_proxy" if config.egress_proxy else "direct",
                 "tunnel_idle_timeout": 0,
-                "version": "0.2.0",
+                "version": "0.2.1",
             },
         }
 
     @app.patch(prefix + "/settings", dependencies=[Depends(auth)])
     async def patch_settings(body: SettingsPatch):
         return {"values": await gateway.update_settings(body.model_dump(exclude_none=True))}
+
+    @app.get(prefix + "/settings/storage", dependencies=[Depends(auth)])
+    async def storage_status():
+        return {
+            **await gateway.observer.storage_status(),
+            "operations": len(gateway.operations),
+            "events": len(gateway.events),
+            "protected": "替换任务、席位、额度账本和恢复状态持续保留；事件最多 1000 条",
+        }
+
+    @app.post(prefix + "/settings/storage/cleanup", dependencies=[Depends(auth)])
+    async def cleanup_storage(request: Request):
+        return await operate(request, "history_cleanup", {}, gateway.cleanup_history)
 
     register_v2(app, gateway, auth, operate)
 

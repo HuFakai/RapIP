@@ -17,6 +17,7 @@ from .models import Binding, GatewayError, IPState, Node, Operation, Replacement
 from .observability import Observability
 from .provider import ProviderError, Webshare
 from .quality import QualityManager
+from .retention import RetentionPolicy
 from .socks import probe_node
 from .storage import Storage
 
@@ -87,6 +88,7 @@ class Gateway:
                 setattr(self.settings, key, value)
         self.bytes_up, self.bytes_down = state.get("bytes_up", 0), state.get("bytes_down", 0)
         self.observer.mode = state.get("log_mode", "errors")
+        self.observer.retention = RetentionPolicy.model_validate(state.get("retention", {}))
         self.quality.load(state.get("quality", {}))
         await self.observer.open()
         self.client = aiohttp.ClientSession(
@@ -174,6 +176,7 @@ class Gateway:
             "bytes_up": self.bytes_up,
             "bytes_down": self.bytes_down,
             "log_mode": self.observer.mode,
+            "retention": self.observer.retention.model_dump(),
             **{
                 name: {key: asdict(value) for key, value in getattr(self, name).items()}
                 for name in ("nodes", "bindings", "replacements", "operations")
@@ -762,8 +765,37 @@ class Gateway:
             self.blacklist = {ip: expiry for ip, expiry in self.blacklist.items() if expiry > now}
             self.retired = {key: expiry for key, expiry in self.retired.items() if expiry > now}
             self.idempotency = {key: item for key, item in self.idempotency.items() if item["expires"] > now}
+            self._prune_history(now)
             await self._persist()
             self.changed.notify_all()
+
+    def _prune_history(self, now):
+        policy = self.observer.retention
+        self.idempotency = {key: item for key, item in self.idempotency.items() if item["expires"] > now}
+        protected = {item["id"] for item in self.idempotency.values() if item["expires"] > now}
+        self.operations = {
+            key: op
+            for key, op in self.operations.items()
+            if key in protected
+            or op.state not in {"COMPLETED", "FAILED"}
+            or not op.completed_at
+            or op.completed_at >= now - policy.operation_days * 86400
+        }
+        self.events = [
+            event for event in self.events if event.get("at", now) >= now - policy.event_days * 86400
+        ][-1000:]
+
+    async def cleanup_history(self):
+        # Separate locks: observation writes never hold the critical scheduling lock.
+        async with self.changed:
+            self._writable()
+            before = len(self.operations)
+            self._prune_history(time.time())
+            await self._persist()
+        async with self.observer.lock:
+            await self.observer.compact(time.time())
+            self.observer.last_compact = time.time()
+        return {"removed_operations": before - len(self.operations), **await self.observer.storage_status()}
 
     async def _observe(self):
         while True:
@@ -1102,6 +1134,8 @@ class Gateway:
                     self.config.probe_enabled = value
                 elif key == "connection_log_mode":
                     self.observer.mode = value
+                elif key == "retention":
+                    self.observer.retention = RetentionPolicy.model_validate(value)
                 elif key == "quality_daily_limit":
                     self.quality.global_daily_limit = value
                 else:

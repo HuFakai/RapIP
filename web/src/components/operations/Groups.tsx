@@ -51,21 +51,27 @@ function PolicyFields({
   }
   return (
     <>
-      <div className="ops-template-row">
-        <Button
-          variant="secondary"
-          size="sm"
-          type="button"
-          onClick={() => setPolicy({ ...basicPolicy })}
-        >
-          基础网络模板
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          type="button"
-          onClick={() =>
-            setPolicy({
+      <div className="quality-presets" aria-label="质量等级">
+        {[
+          {
+            name: "基础可用",
+            note: "数据采集 · 免费网络检测",
+            value: { ...basicPolicy },
+          },
+          {
+            name: "稳定优先",
+            note: "更严格的成功率与延迟",
+            value: {
+              ...basicPolicy,
+              min_success: 3,
+              max_latency_ms: 2500,
+              ttl_hours: 12,
+            },
+          },
+          {
+            name: "高质量",
+            note: "ISP 归属 + 举报信誉检测",
+            value: {
               ...basicPolicy,
               min_success: 3,
               max_latency_ms: 1500,
@@ -74,149 +80,184 @@ function PolicyFields({
               network_types: ["isp"],
               reject_flags: ["hosting", "tor"],
               max_abuse_score: 10,
-            })
-          }
-        >
-          高要求模板
-        </Button>
-      </div>
-      <p className="field-help">
-        模板是初始调参建议。高要求模板需要 IPinfo 对应字段权限和 AbuseIPDB
-        Key；缺失证据时保持未知，不自动换号。
-      </p>
-      <div className="form-two">
-        <label>
-          网络检测样本数
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={policy.samples}
-            onChange={(e) => update("samples", Number(e.target.value))}
-          />
-        </label>
-        <label>
-          最少成功样本
-          <input
-            type="number"
-            min={1}
-            max={policy.samples}
-            value={policy.min_success}
-            onChange={(e) => update("min_success", Number(e.target.value))}
-          />
-        </label>
-        <label>
-          成功样本最大耗时（ms）
-          <input
-            type="number"
-            min={50}
-            max={30000}
-            value={policy.max_latency_ms}
-            onChange={(e) => update("max_latency_ms", Number(e.target.value))}
-          />
-        </label>
-        <label>
-          证据有效期（小时）
-          <input
-            type="number"
-            min={1}
-            max={168}
-            value={policy.ttl_hours}
-            onChange={(e) => update("ttl_hours", Number(e.target.value))}
-          />
-        </label>
-      </div>
-      <label>
-        国家允许列表
-        <input
-          placeholder="留空表示不限；例如 US,CA"
-          value={policy.countries.join(",")}
-          onChange={(e) =>
-            update("countries", e.target.value.toUpperCase().split(","))
-          }
-        />
-      </label>
-      <div className="form-two">
-        <label>
-          ASN 允许列表
-          <input
-            placeholder="AS123,AS456；留空不限"
-            value={policy.allowed_asns.join(",")}
-            onChange={(e) => update("allowed_asns", e.target.value.split(","))}
-          />
-        </label>
-        <label>
-          ASN 拒绝列表
-          <input
-            placeholder="AS123；留空不拒绝"
-            value={policy.denied_asns.join(",")}
-            onChange={(e) => update("denied_asns", e.target.value.split(","))}
-          />
-        </label>
-      </div>
-      <div className="form-two">
-        <label>
-          网络类型要求
-          <select
-            value={policy.network_types[0] ?? ""}
-            onChange={(e) =>
-              update("network_types", e.target.value ? [e.target.value] : [])
+            },
+          },
+        ].map((preset) => (
+          <button
+            key={preset.name}
+            type="button"
+            aria-pressed={
+              JSON.stringify(policy) === JSON.stringify(preset.value)
             }
+            onClick={() => setPolicy(preset.value)}
           >
-            <option value="">不限 / 不要求属性检测</option>
-            <option value="isp">已识别 ISP 归属</option>
-            <option value="hosting">hosting</option>
-            <option value="business">business</option>
-            <option value="education">education</option>
-            <option value="government">government</option>
-          </select>
-        </label>
-        <label>
-          举报置信分上限
-          <input
-            type="number"
-            placeholder="留空不要求信誉评分"
-            min={0}
-            max={100}
-            value={policy.max_abuse_score ?? ""}
-            onChange={(e) =>
-              update(
-                "max_abuse_score",
-                e.target.value === "" ? null : Number(e.target.value),
-              )
-            }
-          />
-        </label>
+            <ShieldCheck size={19} />
+            <strong>{preset.name}</strong>
+            <span>{preset.note}</span>
+          </button>
+        ))}
       </div>
-      <div>
-        <span className="ops-field-label">
-          拒绝属性（需要检测源实际提供字段）
-        </span>
-        <div className="ops-checkboxes">
-          {["hosting", "tor", "vpn", "proxy", "relay"].map((name) => (
-            <label key={name}>
-              <input
-                type="checkbox"
-                checked={policy.reject_flags.includes(name)}
-                onChange={() => flag(name)}
-              />
-              {name}
-            </label>
-          ))}
-        </div>
-      </div>
-      <label className="ops-check">
-        <input
-          type="checkbox"
-          checked={policy.require_ipinfo}
-          onChange={(e) => update("require_ipinfo", e.target.checked)}
-        />
-        必须具备 IPinfo 证据
-      </label>
-      <p className="field-help">
-        proxy / VPN
-        标签默认不拒绝。未要求的维度不显示为检测通过；住宅归属与业务成功不能仅靠一个标签保证。
+      <p className="quality-policy-summary">
+        当前要求：{policy.min_success}/{policy.samples} 次成功 · 最慢{" "}
+        {policy.max_latency_ms} ms · 有效 {policy.ttl_hours} 小时
+        {policy.require_ipinfo || policy.max_abuse_score !== null
+          ? " · 需要第三方检测源"
+          : " · 无需第三方 Key"}
       </p>
+      <p className="field-help">
+        高质量等级需要配置 IPinfo 对应字段权限和 AbuseIPDB
+        Key。证据不足时保持未知，不会自动更换
+        IP。等级只是筛查条件，不代表业务成功保证。
+      </p>
+      <details className="quality-advanced">
+        <summary>
+          <SlidersHorizontal size={15} /> 自定义检测参数 <span>按需展开</span>
+        </summary>
+        <div className="quality-advanced-body">
+          <div className="form-two">
+            <label>
+              网络检测样本数
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={policy.samples}
+                onChange={(e) => update("samples", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              最少成功样本
+              <input
+                type="number"
+                min={1}
+                max={policy.samples}
+                value={policy.min_success}
+                onChange={(e) => update("min_success", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              成功样本最大耗时（ms）
+              <input
+                type="number"
+                min={50}
+                max={30000}
+                value={policy.max_latency_ms}
+                onChange={(e) =>
+                  update("max_latency_ms", Number(e.target.value))
+                }
+              />
+            </label>
+            <label>
+              证据有效期（小时）
+              <input
+                type="number"
+                min={1}
+                max={168}
+                value={policy.ttl_hours}
+                onChange={(e) => update("ttl_hours", Number(e.target.value))}
+              />
+            </label>
+          </div>
+          <label>
+            国家允许列表
+            <input
+              placeholder="留空表示不限；例如 US,CA"
+              value={policy.countries.join(",")}
+              onChange={(e) =>
+                update("countries", e.target.value.toUpperCase().split(","))
+              }
+            />
+          </label>
+          <div className="form-two">
+            <label>
+              ASN 允许列表
+              <input
+                placeholder="AS123,AS456；留空不限"
+                value={policy.allowed_asns.join(",")}
+                onChange={(e) =>
+                  update("allowed_asns", e.target.value.split(","))
+                }
+              />
+            </label>
+            <label>
+              ASN 拒绝列表
+              <input
+                placeholder="AS123；留空不拒绝"
+                value={policy.denied_asns.join(",")}
+                onChange={(e) =>
+                  update("denied_asns", e.target.value.split(","))
+                }
+              />
+            </label>
+          </div>
+          <div className="form-two">
+            <label>
+              网络类型要求
+              <select
+                value={policy.network_types[0] ?? ""}
+                onChange={(e) =>
+                  update(
+                    "network_types",
+                    e.target.value ? [e.target.value] : [],
+                  )
+                }
+              >
+                <option value="">不限 / 不要求属性检测</option>
+                <option value="isp">已识别 ISP 归属</option>
+                <option value="hosting">hosting</option>
+                <option value="business">business</option>
+                <option value="education">education</option>
+                <option value="government">government</option>
+              </select>
+            </label>
+            <label>
+              举报置信分上限
+              <input
+                type="number"
+                placeholder="留空不要求信誉评分"
+                min={0}
+                max={100}
+                value={policy.max_abuse_score ?? ""}
+                onChange={(e) =>
+                  update(
+                    "max_abuse_score",
+                    e.target.value === "" ? null : Number(e.target.value),
+                  )
+                }
+              />
+            </label>
+          </div>
+          <div>
+            <span className="ops-field-label">
+              拒绝属性（需要检测源实际提供字段）
+            </span>
+            <div className="ops-checkboxes">
+              {["hosting", "tor", "vpn", "proxy", "relay"].map((name) => (
+                <label key={name}>
+                  <input
+                    type="checkbox"
+                    checked={policy.reject_flags.includes(name)}
+                    onChange={() => flag(name)}
+                  />
+                  {name}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="ops-check">
+            <input
+              type="checkbox"
+              checked={policy.require_ipinfo}
+              onChange={(e) => update("require_ipinfo", e.target.checked)}
+            />
+            必须具备 IPinfo 证据
+          </label>
+          <p className="field-help">
+            proxy / VPN
+            标签默认不拒绝。未要求的维度不显示为检测通过；住宅归属与业务成功不能仅靠一个标签保证。
+          </p>
+        </div>
+      </details>
     </>
   );
 }
@@ -239,7 +280,8 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
     [round, setRound] = useState(10),
     [slots, setSlots] = useState(3),
     [cooldown, setCooldown] = useState(60),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [previewConfig, setPreviewConfig] = useState("");
   const [page, setPage] = useState(1),
     [size, setSize] = useState(20),
     [memberPage, setMemberPage] = useState(1),
@@ -268,12 +310,14 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
   );
   function edit(group: Group | null) {
     setEditing(group);
-    setStep(group ? 1 : 0);
+    setStep(0);
     setID(group?.id ?? "");
     setName(group?.name ?? "");
     setDescription(group?.description ?? "");
     setPolicy(group?.policy ?? { ...basicPolicy });
     setSelected([]);
+    setPage(1);
+    setCandidateQ("");
     setAuto(group?.auto_replace ?? false);
     setDaily(group?.daily_limit ?? 5);
     setRound(group?.round_limit ?? 10);
@@ -326,7 +370,13 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
       };
       await operation(
         editing ? `/groups/${editing.id}` : "/groups",
-        editing ? body : { ...body, group_id: id, node_ids: selected },
+        editing
+          ? body
+          : {
+              ...body,
+              ...(id.trim() ? { group_id: id.trim() } : {}),
+              node_ids: selected,
+            },
         editing ? "PATCH" : "POST",
       );
       setEditing(undefined);
@@ -342,6 +392,7 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
     setBusy("preview");
     setError("");
     try {
+      setPreviewConfig(JSON.stringify({ policy, selected }));
       const response = await operation("/groups/preview", {
         node_ids: selected,
         policy: normalize(),
@@ -510,15 +561,25 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
         onOpenChange={(open) => {
           if (!open && !busy) setEditing(undefined);
         }}
+        wide
         title={editing ? "编辑质量分组" : "创建质量分组"}
-        description="选择资源、设定质量要求，预览后配置可控的自动换号预算。"
+        description="三步完成项目资源隔离。先选质量等级，再批量添加 IP，最后确认预算。"
       >
-        <form className="form-stack ops-group-form" onSubmit={save}>
+        <form
+          className="form-stack ops-group-form"
+          onSubmit={(e) => {
+            if (step !== 2) {
+              e.preventDefault();
+              return;
+            }
+            void save(e);
+          }}
+        >
           <div className="ops-steps">
-            {["选择资源", "质量要求", "预算与保存"].map((text, i) => (
+            {["用途与质量", "添加 IP", "确认并创建"].map((text, i) => (
               <button
                 type="button"
-                disabled={!!busy || false}
+                disabled={!!busy}
                 className={step === i ? "selected" : ""}
                 key={text}
                 onClick={() => setStep(i)}
@@ -528,236 +589,353 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
               </button>
             ))}
           </div>
-          <ErrorMessage message={error} />
-          {step === 0 && (
-            <>
-              <div className="form-two">
-                <label>
-                  分组 ID
-                  <input
-                    disabled={!!editing}
-                    required
-                    pattern="[A-Za-z0-9]{1,32}"
-                    maxLength={32}
-                    value={id}
-                    onChange={(e) => setID(e.target.value)}
-                    placeholder="register / collect"
-                  />
-                </label>
-                <label>
-                  分组名称
-                  <input
-                    required
-                    maxLength={64}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="例如高要求业务"
-                  />
-                </label>
-              </div>
-              <label>
-                用途说明
-                <input
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  maxLength={300}
-                />
-              </label>
-              <div className="ops-filter-row">
-                <input
-                  aria-label="搜索待选 IP"
-                  placeholder="筛选 IP / CIDR"
-                  value={candidateQ}
-                  onChange={(e) => {
-                    setCandidateQ(e.target.value);
-                    setPage(1);
-                  }}
-                />
-                <span className="field-help">
-                  已选 {selected.length} 个 · 每次最多 100 个
-                </span>
-              </div>
-              <div className="ops-member-select">
-                {candidates.data?.items.map((n) => (
-                  <label key={n.id}>
-                    <input
-                      type="checkbox"
-                      disabled={
-                        n.used ||
-                        !["FRESH", "QUARANTINED"].includes(n.state) ||
-                        (!selected.includes(n.id) && selected.length >= 100)
-                      }
-                      checked={selected.includes(n.id)}
-                      onChange={(e) =>
-                        setSelected(
-                          e.target.checked
-                            ? [...selected, n.id]
-                            : selected.filter((x) => x !== n.id),
-                        )
-                      }
-                    />
-                    <CountryFlag code={n.country} />
-                    <span className="mono">{n.ip}</span>
-                    <small>{n.account_id}</small>
-                    <Status state={n.state} />
-                  </label>
-                ))}
-              </div>
-              <ErrorMessage message={candidates.error} />
-              <Pages
-                data={candidates.data}
-                page={page}
-                setPage={setPage}
-                size={size}
-                setSize={setSize}
-              />
-              <p className="field-help">
-                仅选择默认组里尚未使用的
-                IP；已有绑定、排空或替换中的资源不可迁移。允许先创建空组，之后再添加资源。
-              </p>
-              <Button type="button" onClick={() => setStep(1)}>
-                设置质量要求 <ChevronRight size={13} />
-              </Button>
-            </>
-          )}
-          {step === 1 && (
-            <>
-              <PolicyFields policy={policy} setPolicy={setPolicy} />
-              {!editing && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={!!busy || !selected.length}
-                  onClick={() => void preview()}
-                >
-                  {busy === "preview" ? (
-                    <Loader2 className="spin" size={13} />
-                  ) : (
-                    <Zap size={13} />
-                  )}
-                  只读预览选中资源
-                </Button>
-              )}
-              {results && (
-                <div className="ops-preview">
-                  <strong>预览结果 · 不调用 Replace</strong>
-                  {results.map((r, i) => (
-                    <div key={i}>
-                      <span className="mono">{r.ip}</span>
-                      <Status state={r.state} />
-                      <small>{r.reasons.join("；") || "满足所选条件"}</small>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <Button type="button" onClick={() => setStep(2)}>
-                设置预算 <ChevronRight size={13} />
-              </Button>
-            </>
-          )}
-          {step === 2 && (
-            <>
-              {editing && (
+          <fieldset className="quality-step-content" disabled={!!busy}>
+            <ErrorMessage message={error} />
+            {step === 0 && (
+              <>
                 <div className="form-two">
                   <label>
                     分组名称
                     <input
                       required
+                      maxLength={64}
                       value={name}
                       onChange={(e) => setName(e.target.value)}
+                      placeholder="例如：注册项目 / 数据采集"
                     />
                   </label>
                   <label>
-                    用途说明
+                    用途说明（选填）
                     <input
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
+                      maxLength={300}
+                      placeholder="描述这个分组服务的项目"
                     />
                   </label>
                 </div>
-              )}
-              <div className="ops-group-review">
-                <Layers3 size={18} />
-                <div>
-                  <strong>{name || id || "尚未命名的分组"}</strong>
-                  <p>
-                    {editing
-                      ? "策略变更后未分配库存会重新准入，已有长连接保持不变"
-                      : `选中 ${selected.length} 个独立资源席位，其他组不参与筛查`}
-                  </p>
-                </div>
-              </div>
-              <div className="form-two">
-                <label>
-                  每日替换上限
-                  <input
-                    type="number"
-                    min={0}
-                    max={100000}
-                    value={daily}
-                    onChange={(e) => setDaily(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  本轮替换上限
-                  <input
-                    type="number"
-                    min={0}
-                    max={100000}
-                    value={round}
-                    onChange={(e) => setRound(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  每席位连续替换上限
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={slots}
-                    onChange={(e) => setSlots(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  替换间隔（秒）
-                  <input
-                    type="number"
-                    min={0}
-                    max={86400}
-                    value={cooldown}
-                    onChange={(e) => setCooldown(Number(e.target.value))}
-                  />
-                </label>
-              </div>
-              <label className="ops-check ops-auto-replace">
-                <input
-                  type="checkbox"
-                  checked={auto}
-                  onChange={(e) => setAuto(e.target.checked)}
+                <PolicyFields
+                  policy={policy}
+                  setPolicy={(value) => {
+                    setPolicy(value);
+                    setChecking(null);
+                  }}
                 />
-                <div>
-                  <strong>自动更换明确不合格的 IP</strong>
-                  <small>
-                    开启后会按所选预算调用 Webshare
-                    Replace；未知、检测异常或额度耗尽时停止。每日额度以
-                    Asia/Shanghai 结算。
-                  </small>
+                <details className="quality-advanced">
+                  <summary>
+                    分组标识 <span>{id || "保存时自动生成"}</span>
+                  </summary>
+                  <div className="quality-advanced-body">
+                    <label>
+                      自定义分组 ID（选填）
+                      <input
+                        disabled={!!editing}
+                        pattern="[A-Za-z0-9]{1,32}"
+                        maxLength={32}
+                        value={id}
+                        onChange={(e) => setID(e.target.value)}
+                        placeholder="留空自动生成；用于代理用户名"
+                      />
+                    </label>
+                    <p className="field-help">
+                      ID 只支持字母和数字，创建后保持不变。通常无需修改。
+                    </p>
+                  </div>
+                </details>
+              </>
+            )}
+            {step === 1 && (
+              <>
+                <div className="quality-selection-heading">
+                  <div>
+                    <strong>为这个项目选择 IP</strong>
+                    <p>
+                      已选 <b>{selected.length}</b> 个 · 最多 100 个 ·
+                      跨页保留选择
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={!selected.length}
+                    onClick={() => setSelected([])}
+                  >
+                    清空已选
+                  </Button>
                 </div>
-              </label>
-              <p className="field-help">
-                账号总预算、全局分组预算及上方限额同时生效。不保证有限替换次数内一定获得合格
-                IP。
-              </p>
-              <Button disabled={!!busy || !id || !name} type="submit">
-                {busy === "save" ? (
-                  <Loader2 size={14} className="spin" />
-                ) : (
-                  <Save size={14} />
+                <div className="ops-filter-row">
+                  <input
+                    aria-label="搜索待选 IP"
+                    placeholder="筛选 IP / CIDR"
+                    value={candidateQ}
+                    onChange={(e) => {
+                      setCandidateQ(e.target.value);
+                      setPage(1);
+                    }}
+                  />
+                  <span className="field-help">
+                    已选 {selected.length} 个 · 每次最多 100 个
+                  </span>
+                </div>
+                <div className="quality-pick-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      setSelected((old) =>
+                        [
+                          ...new Set([
+                            ...old,
+                            ...(candidates.data?.items
+                              .filter(
+                                (n) =>
+                                  !n.used &&
+                                  ["FRESH", "QUARANTINED"].includes(n.state),
+                              )
+                              .map((n) => n.id) ?? []),
+                          ]),
+                        ].slice(0, 100),
+                      )
+                    }
+                  >
+                    选择本页可用 IP
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setSelected((old) =>
+                        old.filter(
+                          (id) =>
+                            !candidates.data?.items.some((n) => n.id === id),
+                        ),
+                      )
+                    }
+                  >
+                    取消本页选择
+                  </Button>
+                </div>
+                <div className="quality-ip-picker">
+                  <div className="quality-ip-head">
+                    <span>选择</span>
+                    <span>出口 IP / 国家</span>
+                    <span>所属账号</span>
+                    <span>状态</span>
+                  </div>
+                  {!candidates.data && !candidates.error && (
+                    <p className="ops-footnote">正在加载可用资源…</p>
+                  )}
+                  {candidates.data?.items.map((n) => {
+                    const unavailable =
+                      n.used || !["FRESH", "QUARANTINED"].includes(n.state);
+                    return (
+                      <label
+                        className={`quality-ip-row${selected.includes(n.id) ? " is-selected" : ""}`}
+                        key={n.id}
+                      >
+                        <input
+                          aria-label={`选择 IP ${n.ip}`}
+                          type="checkbox"
+                          disabled={
+                            unavailable ||
+                            (!selected.includes(n.id) && selected.length >= 100)
+                          }
+                          checked={selected.includes(n.id)}
+                          onChange={(e) =>
+                            setSelected((old) =>
+                              e.target.checked
+                                ? [...old, n.id]
+                                : old.filter((x) => x !== n.id),
+                            )
+                          }
+                        />
+                        <span className="quality-ip-address">
+                          <CountryFlag code={n.country} />
+                          <span className="mono">{n.ip}</span>
+                        </span>
+                        <span className="quality-ip-account">
+                          {n.account_id}
+                        </span>
+                        <span>
+                          {unavailable ? (
+                            <span className="ops-status tone-neutral">
+                              当前不可迁移
+                            </span>
+                          ) : (
+                            <Status state={n.state} />
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {candidates.data?.items.length === 0 && (
+                    <p className="ops-footnote">
+                      没有符合搜索条件的 IP，可先创建空组，之后添加资源。
+                    </p>
+                  )}
+                </div>
+                <ErrorMessage message={candidates.error} />
+                <Pages
+                  data={candidates.data}
+                  page={page}
+                  setPage={setPage}
+                  size={size}
+                  setSize={setSize}
+                />
+                <p className="field-help">
+                  仅选择默认组里尚未使用的
+                  IP；已有绑定、排空或替换中的资源不可迁移。允许先创建空组，之后再添加资源。
+                </p>
+                {!editing && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!!busy || !selected.length}
+                    onClick={() => void preview()}
+                  >
+                    {busy === "preview" ? (
+                      <Loader2 className="spin" size={13} />
+                    ) : (
+                      <Zap size={13} />
+                    )}
+                    只读预览选中资源
+                  </Button>
                 )}
-                保存并应用
-              </Button>
-            </>
-          )}
+                {results &&
+                  previewConfig === JSON.stringify({ policy, selected }) && (
+                    <div className="ops-preview">
+                      <strong>预览结果 · 不调用 Replace</strong>
+                      {results.map((r, i) => (
+                        <div key={i}>
+                          <span className="mono">{r.ip}</span>
+                          <Status state={r.state} />
+                          <small>
+                            {r.reasons.join("；") || "满足所选条件"}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </>
+            )}
+            {step === 2 && (
+              <>
+                <div className="ops-group-review">
+                  <Layers3 size={18} />
+                  <div>
+                    <strong>{name || id || "尚未命名的分组"}</strong>
+                    <p>
+                      {editing
+                        ? "策略变更后未分配库存会重新准入，已有长连接保持不变"
+                        : `选中 ${selected.length} 个独立资源席位，其他组不参与筛查`}
+                    </p>
+                  </div>
+                </div>
+                <div className="form-two">
+                  <label>
+                    每日替换上限
+                    <input
+                      type="number"
+                      min={0}
+                      max={100000}
+                      value={daily}
+                      onChange={(e) => setDaily(Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    本轮替换上限
+                    <input
+                      type="number"
+                      min={0}
+                      max={100000}
+                      value={round}
+                      onChange={(e) => setRound(Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    每席位连续替换上限
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={slots}
+                      onChange={(e) => setSlots(Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    替换间隔（秒）
+                    <input
+                      type="number"
+                      min={0}
+                      max={86400}
+                      value={cooldown}
+                      onChange={(e) => setCooldown(Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <label className="ops-check ops-auto-replace">
+                  <input
+                    type="checkbox"
+                    checked={auto}
+                    onChange={(e) => setAuto(e.target.checked)}
+                  />
+                  <div>
+                    <strong>自动更换明确不合格的 IP</strong>
+                    <small>
+                      开启后会按所选预算调用 Webshare
+                      Replace；未知、检测异常或额度耗尽时停止。每日额度以
+                      Asia/Shanghai 结算。
+                    </small>
+                  </div>
+                </label>
+                <p className="field-help">
+                  账号总预算、全局分组预算及上方限额同时生效。不保证有限替换次数内一定获得合格
+                  IP。
+                </p>
+              </>
+            )}
+          </fieldset>
+          <div className="quality-wizard-footer">
+            <span>
+              {step === 0
+                ? "先选择适合项目的筛查标准"
+                : `已选 ${selected.length} 个 IP · ${auto ? "自动更换开启" : "自动更换关闭"}`}
+            </span>
+            <div>
+              {step > 0 && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!!busy}
+                  onClick={() => setStep(step - 1)}
+                >
+                  上一步
+                </Button>
+              )}
+              {step < 2 && (
+                <Button
+                  type="button"
+                  disabled={!!busy || !name.trim()}
+                  onClick={() => setStep(step + 1)}
+                >
+                  下一步 <ChevronRight size={14} />
+                </Button>
+              )}
+              {step === 2 && (
+                <Button disabled={!!busy || !name.trim()} type="submit">
+                  {busy === "save" ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  保存并应用
+                </Button>
+              )}
+            </div>
+          </div>
         </form>
       </Dialog>
       <Dialog
@@ -1017,6 +1195,27 @@ export function QualitySources({ notify }: { notify: (v: string) => void }) {
           全局组替换今日 {query.data?.global_used_today ?? "—"} /{" "}
           {query.data?.global_daily_limit ?? "—"}
         </span>
+      </div>
+      <div className="quality-free-source">
+        <ShieldCheck size={22} />
+        <div>
+          <strong>基础检测免费可用，无需第三方 Key</strong>
+          <p>
+            创建分组时选择“基础可用”或“稳定优先”，即可核验真实出口、连通性、成功次数和延迟。网络检测会产生少量代理流量。
+          </p>
+          <p>
+            需要手动交叉复核？开源项目{" "}
+            <a
+              href="https://github.com/xykt/IPQuality"
+              target="_blank"
+              rel="noreferrer"
+            >
+              xykt/IPQuality ↗
+            </a>{" "}
+            支持代理检测和 JSON
+            报告。它是独立工具，报告不会自动参与本系统准入或替换判断。
+          </p>
+        </div>
       </div>
       <ErrorMessage message={query.error} />
       <div className="ops-source-grid">

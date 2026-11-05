@@ -17,7 +17,7 @@ class Model(BaseModel):
 
 
 class GroupCreate(Model):
-    group_id: str = Field(pattern=r"^[A-Za-z0-9]{1,32}$")
+    group_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]{1,32}$")
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=300)
     policy: QualityPolicy = Field(default_factory=QualityPolicy)
@@ -83,7 +83,9 @@ def register(app, gateway, auth, operate):
             request,
             "group_create",
             body.model_dump(),
-            lambda: g.quality.save_group(body.group_id, values, body.node_ids, create=True),
+            lambda: g.quality.save_group(
+                body.group_id or "g" + uid()[:12], values, body.node_ids, create=True
+            ),
         )
 
     @app.post(prefix + "/groups/preview", dependencies=deps)
