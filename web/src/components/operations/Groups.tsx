@@ -1,3 +1,4 @@
+import { LoadingState, TableLoading } from "../ui/loading";
 import { RotationDialog } from "./RotationDialog";
 import { useState, type FormEvent } from "react";
 import {
@@ -450,7 +451,10 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
           按项目隔离资源，只有本组合格 IP 才可分配
         </p>
         <div className="ops-filter-row">
-          <Refresh onClick={() => void query.refresh()} />
+          <Refresh
+            onClick={() => void query.refresh()}
+            busy={query.isFetching}
+          />
           <Button size="sm" onClick={() => edit(null)}>
             <Plus size={13} />
             创建质量组
@@ -473,6 +477,9 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
               </tr>
             </thead>
             <tbody>
+              {query.isLoading && (
+                <TableLoading columns={7} label="正在加载质量分组…" />
+              )}
               {query.data?.items.map((g) => (
                 <tr key={g.id}>
                   <td>
@@ -1253,6 +1260,9 @@ export function QualitySources({ notify }: { notify: (v: string) => void }) {
         </div>
       </div>
       <ErrorMessage message={query.error} />
+      {query.isLoading && (
+        <LoadingState label="正在加载检测源配置…" variant="settings" rows={3} />
+      )}
       <div className="ops-source-grid">
         {query.data?.items.map((source) => (
           <form

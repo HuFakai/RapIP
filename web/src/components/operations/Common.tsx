@@ -148,10 +148,22 @@ export function Pages({
     </div>
   );
 }
-export function Refresh({ onClick }: { onClick: () => void }) {
+export function Refresh({
+  onClick,
+  busy = false,
+}: {
+  onClick: () => void;
+  busy?: boolean;
+}) {
   return (
-    <Button variant="secondary" size="sm" onClick={onClick}>
-      <RefreshCw size={13} />
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={onClick}
+      disabled={busy}
+      aria-label={busy ? "正在刷新" : "刷新"}
+    >
+      <RefreshCw size={13} className={busy ? "spin" : ""} />
       刷新
     </Button>
   );

@@ -1,3 +1,4 @@
+import { LoadingState } from "../ui/loading";
 import { useState, type FormEvent } from "react";
 import { Clock3, Database, Loader2, Trash2 } from "lucide-react";
 import { mutate, refreshAll, useQuery } from "@/lib/api";
@@ -76,6 +77,13 @@ export function Retention({ notify }: { notify: (text: string) => void }) {
         <span className="small muted">定时清理 · 保护运行状态</span>
       </div>
       <ErrorMessage message={query.error || d?.error} />
+      {query.isLoading && (
+        <LoadingState
+          label="正在加载数据保留配置…"
+          variant="settings"
+          rows={4}
+        />
+      )}
       {d && (
         <>
           <div className="retention-stats">

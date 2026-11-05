@@ -33,7 +33,14 @@ export function Dialog({
           <DialogPrimitive.Close className="dialog-close" aria-label="关闭">
             <X size={19} />
           </DialogPrimitive.Close>
-          {children}
+          <div
+            className="dialog-body"
+            role="region"
+            aria-label="弹窗内容"
+            tabIndex={0}
+          >
+            {children}
+          </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

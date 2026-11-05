@@ -1,3 +1,4 @@
+import { TableLoading } from "../ui/loading";
 import { useState } from "react";
 import { api, refreshAll, useQuery, type Paged } from "@/lib/api";
 import { queryString, type ConnectionRecord } from "@/lib/v2";
@@ -201,7 +202,10 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
               />
             </div>
           </label>
-          <Refresh onClick={() => void query.refresh()} />
+          <Refresh
+            onClick={() => void query.refresh()}
+            busy={query.isFetching}
+          />
         </div>
         <ErrorMessage message={query.error || query.data?.error} />
         <div className="ops-table-wrap">
@@ -220,6 +224,9 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
               </tr>
             </thead>
             <tbody>
+              {query.isLoading && (
+                <TableLoading columns={9} label="正在加载连接记录…" />
+              )}
               {query.data?.items.map((r) => (
                 <tr
                   key={r.id}

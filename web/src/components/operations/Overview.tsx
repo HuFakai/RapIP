@@ -1,3 +1,4 @@
+import { LoadingState } from "../ui/loading";
 import { useEffect, useState } from "react";
 import {
   Activity,
@@ -218,6 +219,23 @@ export function Overview({
                     color: "#e0ad73",
                   },
                 ];
+  if (!d && query.error)
+    return (
+      <div className="surface ops-panel">
+        <ErrorMessage message={query.error} />
+        <Button
+          variant="secondary"
+          disabled={query.isFetching}
+          onClick={() => void query.refresh()}
+        >
+          重新加载总览
+        </Button>
+      </div>
+    );
+  if (!d && !query.error)
+    return (
+      <LoadingState variant="overview" label="正在加载代理总览…" rows={3} />
+    );
   return (
     <div className="ops-overview page-enter">
       <div className="ops-toolbar">
@@ -255,7 +273,10 @@ export function Overview({
             />
             5 秒刷新
           </label>
-          <Refresh onClick={() => void query.refresh()} />
+          <Refresh
+            onClick={() => void query.refresh()}
+            busy={query.isFetching}
+          />
           <Button size="sm" onClick={onConnect}>
             <Network size={13} />
             连接配置

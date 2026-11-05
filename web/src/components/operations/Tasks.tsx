@@ -1,3 +1,4 @@
+import { LoadingState, TableLoading } from "../ui/loading";
 import { useState } from "react";
 import { useQuery, type EventData, type Paged, type TaskData } from "@/lib/api";
 import { Button } from "../ui/button";
@@ -162,7 +163,10 @@ export function Tasks() {
               <option value="replacement">上游替换</option>
             </select>
           </div>
-          <Refresh onClick={() => void query.refresh()} />
+          <Refresh
+            onClick={() => void query.refresh()}
+            busy={query.isFetching}
+          />
         </div>
         <ErrorMessage message={query.error} />
         <div className="ops-table-wrap">
@@ -178,6 +182,9 @@ export function Tasks() {
               </tr>
             </thead>
             <tbody>
+              {query.isLoading && (
+                <TableLoading columns={6} label="正在加载任务…" />
+              )}
               {query.data?.items.map((t) => (
                 <tr key={t.id}>
                   <td>
@@ -253,6 +260,9 @@ export function Tasks() {
           <span>与当前账号 / 分组筛选一致</span>
         </div>
         <ErrorMessage message={events.error} />
+        {events.isLoading && (
+          <LoadingState label="正在加载运行事件…" rows={2} />
+        )}
         {events.data?.items.map((e) => (
           <div className="ops-event" key={e.id}>
             <Time value={e.at} />

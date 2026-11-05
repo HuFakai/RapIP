@@ -1,3 +1,4 @@
+import { LoadingState } from "./components/ui/loading";
 import {
   useCallback,
   lazy,
@@ -366,6 +367,7 @@ function BindingsPage({
         </Button>
       </div>
       <ErrorNote message={query.error} />
+      {query.isLoading && <LoadingState label="正在加载会话绑定…" />}
       <div className="binding-list">
         {query.data?.items.map((item) => (
           <div className="binding-item" key={item.id}>
@@ -634,6 +636,7 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
         </Button>
       </div>
       <ErrorNote message={query.error} />
+      {query.isLoading && <LoadingState label="正在加载上游账号…" />}
       <div className="account-list">
         {query.data?.items.map((item) => (
           <section className="surface account-surface" key={item.account_id}>
@@ -1248,6 +1251,9 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
         {visited.includes("retention") && <Retention notify={notify} />}
       </div>
       <ErrorNote message={query.error} />
+      {query.isLoading && section !== "appearance" && (
+        <LoadingState label="正在加载网关设置…" variant="settings" />
+      )}
       {query.data && (
         <>
           <div
@@ -1735,7 +1741,9 @@ export default function App() {
             )}
             {pageId === "overview" && (
               <Suspense
-                fallback={<p className="ops-footnote">正在加载运行看板…</p>}
+                fallback={
+                  <LoadingState variant="overview" label="正在加载运行看板…" />
+                }
               >
                 <Overview
                   key={routeKey}

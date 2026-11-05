@@ -1,3 +1,4 @@
+import { TableLoading } from "../ui/loading";
 import { useEffect, useState } from "react";
 import {
   ArrowUpDown,
@@ -254,7 +255,10 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
               ))}
             </div>
           </details>
-          <Refresh onClick={() => void query.refresh()} />
+          <Refresh
+            onClick={() => void query.refresh()}
+            busy={query.isFetching}
+          />
         </div>
       </form>
       <ErrorMessage message={query.error} />
@@ -325,6 +329,12 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
             </tr>
           </thead>
           <tbody>
+            {query.isLoading && (
+              <TableLoading
+                columns={5 + visible.length}
+                label="正在加载 IP 资源…"
+              />
+            )}
             {query.data?.items.map((n) => (
               <tr key={n.id}>
                 <td>

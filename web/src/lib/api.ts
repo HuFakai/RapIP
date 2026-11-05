@@ -86,6 +86,7 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
   const mounted = useRef(true);
   const sequence = useRef(0);
   const loading = useRef(false);
+  const [isFetching, setFetching] = useState(false);
   const failures = useRef(0);
   const nextAttempt = useRef(0);
   const refresh = useCallback(async () => {
@@ -97,6 +98,7 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
     )
       return;
     loading.current = true;
+    setFetching(true);
     const seq = ++sequence.current;
     try {
       const value = await readShared<T>(path);
@@ -114,13 +116,17 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
         nextAttempt.current = Date.now() + 1000 * 2 ** failures.current;
       }
     } finally {
-      if (seq === sequence.current) loading.current = false;
+      if (mounted.current && seq === sequence.current) {
+        loading.current = false;
+        setFetching(false);
+      }
     }
   }, [path, enabled]);
   useEffect(() => {
     mounted.current = true;
     sequence.current++;
     loading.current = false;
+    setFetching(false);
     failures.current = 0;
     nextAttempt.current = 0;
     setData(undefined);
@@ -140,7 +146,14 @@ export function useQuery<T>(path: string, enabled = true, interval = 4000) {
       document.removeEventListener("visibilitychange", run);
     };
   }, [refresh, interval]);
-  return { data, error, updatedAt, refresh };
+  return {
+    data,
+    error,
+    updatedAt,
+    refresh,
+    isFetching,
+    isLoading: enabled && data === undefined && !error,
+  };
 }
 
 export function refreshAll() {
