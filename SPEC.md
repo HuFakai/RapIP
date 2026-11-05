@@ -365,7 +365,7 @@ RapIP/
 - 任务提交结果不明时保持 UNCERTAIN，阻止同账号后续替换，需供应商后台核对；首版不提供自动猜测结果的重试。
 - 健康检查整体失败仅隔离，不批量消耗额度；单节点重复失败且有健康同伴时才自动补货。
 - 可选 RAPIP_EGRESS_PROXY 只配置到达供应商节点的网络跳转，默认直连；不得把当前 Webshare 落地再次当作嵌套连通性验收依据。
-- 后端测试及页面控制闭环使用模拟上游；尚未消耗真实更换额度验证 Replace API。Docker 文件已提供，本机无 Docker 引擎，镜像构建需在部署环境验证。
+- 后端自动测试及常规页面验证使用模拟上游；另已在 Linux ARM64 服务器完成 Docker 部署、6 节点真实测活、SOCKS5/HTTP CONNECT 同会话转发与 1 次授权的真实 Replace 验收。替换计数为 submitted=1、completed=1、redraws=0；长期运行及容量压测仍待验证，见 docs/VALIDATION.md。
 
 ## 16. 部署实测前的体验更新
 

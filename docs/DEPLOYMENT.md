@@ -171,4 +171,4 @@ docker compose exec gateway python -m rapip.diagnostics
 | 当前电脑握手失败，其他服务器可用 | 检查 Webshare 落地嵌套路径，不据此批量替换节点 |
 | UNCERTAIN 任务阻塞补货 | 供应商后台核对结果，不盲目重发 Replace 请求 |
 
-部署脚本的首次/更新、端口排除、凭据保留、构建/健康失败路径以模拟 Docker 自动测试覆盖。本机没有 Docker 引擎，尚未实际构建/启动容器；真实镜像、供应商连通及换号仍需在目标服务器验收。
+部署脚本的首次/更新、端口排除、凭据保留、构建/健康失败路径以模拟 Docker 自动测试覆盖。已在 Linux ARM64 服务器完成真实 Docker 构建、健康启动、SSH 隧道页面访问、6 个节点测活、SOCKS5/HTTP CONNECT 转发以及用户授权的 1 次真实替换。完整证据和未覆盖范围见 [验证记录](VALIDATION.md)；新服务器仍应按本节逐步验收。
