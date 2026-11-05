@@ -260,6 +260,7 @@ class SocksServer:
                 with contextlib.suppress(OSError):
                     await writer.drain()
         except GatewayError as error:
+            observation["error_message"] = error.message
             result, reason = error.code, "scheduler_rejected"
             if not replied:
                 writer.write(b"\x05\x01\x00\x01" + bytes(6))

@@ -74,6 +74,8 @@ class AccountPatch(Model):
 
 
 class SettingsPatch(Model):
+    max_connections: int | None = Field(default=None, ge=1, le=100000)
+    max_connections_per_binding: int | None = Field(default=None, ge=1, le=100000)
     retention: RetentionPolicy | None = None
     connection_log_mode: Literal["off", "errors", "all"] | None = None
     quality_daily_limit: int | None = Field(default=None, ge=0, le=100000)

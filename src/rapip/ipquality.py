@@ -230,7 +230,7 @@ class IPQualityReports:
                     chunks.append(part)
                 code = await process.wait()
                 if code:
-                    raise ValueError("diagnostic process failed")
+                    raise ValueError(f"diagnostic process failed (exit {code})")
                 return json.loads(b"".join(chunks))
         finally:
             if process:

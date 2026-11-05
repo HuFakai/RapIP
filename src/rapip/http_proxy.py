@@ -214,6 +214,8 @@ class HttpProxy(SocksServer):
         except (GatewayError, UpstreamError) as error:
             result = error.code if isinstance(error, GatewayError) else "upstream_" + error.kind
             reason = "connect_failed"
+            if isinstance(error, GatewayError):
+                observation["error_message"] = error.message
             if isinstance(error, UpstreamError):
                 observation["socks_reply"] = error.reply
             if not replied:

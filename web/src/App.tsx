@@ -779,6 +779,20 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
   }
   const fields = [
     {
+      key: "max_connections",
+      label: "网关并发连接上限",
+      detail: "限制新接入连接；调整不会主动断开现有连接",
+      min: 1,
+      max: 100000,
+    },
+    {
+      key: "max_connections_per_binding",
+      label: "单工位并发连接上限",
+      detail: "每个绑定的 TCP 连接数；压测触及 128 时可按资源情况调到 256",
+      min: 1,
+      max: 100000,
+    },
+    {
       key: "quality_daily_limit",
       label: "分组每日全局替换预算",
       detail: "所有非默认资源组共用；0 暂停分组替换",

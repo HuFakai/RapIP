@@ -232,6 +232,10 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
                   <td className="mono">{r.target || "—"}</td>
                   <td>
                     <Status state={r.result} />
+                    {r.socks_reply != null && (
+                      <small>SOCKS 返回码 {r.socks_reply}</small>
+                    )}
+                    {r.error_message && <small>{r.error_message}</small>}
                     {r.phase === "active" && <small>连接中</small>}
                   </td>
                   <td>{r.established_ms?.toFixed(0) ?? "—"} ms</td>
@@ -287,6 +291,9 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
                 Session: selected.session,
                 出口: selected.ip,
                 关闭原因: selected.close_reason ?? "仍在连接",
+                错误说明: selected.error_message,
+                SOCKS命令: selected.socks_command,
+                SOCKS返回码: selected.socks_reply,
                 代次: selected.generation,
                 HTTP状态: "不可观测 / 不适用",
               }).map(([k, v]) => (

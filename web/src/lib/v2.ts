@@ -135,6 +135,9 @@ export interface OverviewData {
   at: number;
 }
 export interface ConnectionRecord {
+  socks_reply?: number;
+  socks_command?: number;
+  error_message?: string;
   id: string;
   at: number;
   started_at: number;

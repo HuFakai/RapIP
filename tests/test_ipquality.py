@@ -105,3 +105,16 @@ async def test_ipquality_api_auth_csrf_idempotency_and_key_redaction(client, gat
     )
     assert login.status_code == 200
     assert (await client.post(path, json={})).status_code == 403
+
+
+async def test_connection_limits_are_editable_with_validation(client, gateway):
+    invalid = await client.patch("/api/v1/settings", headers=HEADERS, json={"max_connections_per_binding": 0})
+    assert invalid.status_code == 422
+    response = await client.patch(
+        "/api/v1/settings",
+        headers=HEADERS,
+        json={"max_connections_per_binding": 256, "max_connections": 1024},
+    )
+    assert response.status_code == 200
+    assert gateway.settings.max_connections_per_binding == 256
+    assert (await gateway.storage.load())["settings"]["max_connections_per_binding"] == 256
