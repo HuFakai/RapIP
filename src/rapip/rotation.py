@@ -286,7 +286,7 @@ class RotationManager:
                     job.state, job.error = "QUEUED", None
                 except GatewayError:
                     pass
-        for binding in list(g.bindings.values()):
+        for binding in sorted(g.bindings.values(), key=lambda b: b.rotation.get("next_at") or float("inf")):
             policy = self.policy(binding.group_id)
             if (
                 binding.released

@@ -423,3 +423,16 @@ async def test_recovery_cancels_uncommitted_orphan_but_preserves_waiting_manual(
     manager.load(copy.deepcopy(gateway.rotation.snapshot()))
     assert manager.ledger[orphan]["state"] == "CANCELLED"
     assert manager.ledger[waiting]["state"] == "RESERVED"
+
+
+async def test_scheduler_serves_oldest_due_binding_without_worker_starvation(gateway):
+    allowance(gateway)
+    await gateway.rotation.save("default", RotationPolicy(enabled=True, daily_limit=10, total_limit=10))
+    a, old_a, _ = await gateway.acquire(route(worker="01"))
+    b, old_b, _ = await gateway.acquire(route(worker="02"))
+    gateway.rotation.connected(a)
+    gateway.rotation.connected(b)
+    a.rotation["next_at"] = time.time() - 10
+    b.rotation["next_at"] = time.time() - 100
+    await gateway.rotation.tick()
+    assert a.node_id == old_a.id and b.node_id != old_b.id
