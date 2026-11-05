@@ -30,6 +30,7 @@ import {
   Settings2,
   ShieldCheck,
   Terminal,
+  Trash2,
   Unplug,
   Workflow,
   X,
@@ -57,7 +58,7 @@ import { Retention } from "./components/operations/Retention";
 import { Groups, QualitySources } from "./components/operations/Groups";
 import { Connections } from "./components/operations/Connections";
 import { Tasks } from "./components/operations/Tasks";
-import { queryString, type Group } from "./lib/v2";
+import { operation, queryString, type Group } from "./lib/v2";
 import { AppearanceSettings } from "./components/AppearanceSettings";
 
 const Overview = lazy(() =>
@@ -458,6 +459,21 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<AccountData | null>(null);
+  const [removing, setRemoving] = useState<AccountData | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const deletion = useQuery<{
+    allowed: boolean;
+    reason: string | null;
+    node_count: number;
+  }>(
+    `/accounts/${removing?.account_id ?? "none"}/deletion-check`,
+    !!removing,
+    3000,
+  );
+  const currentRemoval =
+    query.data?.items.find(
+      (item) => item.account_id === removing?.account_id,
+    ) ?? removing;
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -497,7 +513,7 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       notify((err as Error).message);
     }
   }
-  async function saveBudget(event: FormEvent<HTMLFormElement>) {
+  async function saveAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing) return;
     setBusy(true);
@@ -507,6 +523,13 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       await mutate(
         `/accounts/${editing.account_id}`,
         {
+          name: String(form.get("name")).trim(),
+          traffic_limit_gb: form.get("traffic_limit_gb")
+            ? Number(form.get("traffic_limit_gb"))
+            : null,
+          ...(String(form.get("api_key") || "").trim()
+            ? { api_key: String(form.get("api_key")).trim() }
+            : {}),
           replacement_budget: form.get("replacement_budget")
             ? Number(form.get("replacement_budget"))
             : null,
@@ -516,9 +539,33 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       );
       setEditing(null);
       refreshAll();
-      notify("账号预算与补货策略已保存");
+      notify("账号资料与补货策略已保存");
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function removeAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!removing || confirmation !== removing.account_id) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await operation(
+        `/accounts/${removing.account_id}`,
+        {},
+        "DELETE",
+      );
+      setRemoving(null);
+      setConfirmation("");
+      refreshAll();
+      notify(
+        String(result.warning || "账号已从本地移除，没有调用供应商更换或退订"),
+      );
+    } catch (err) {
+      setError((err as Error).message);
+      refreshAll();
     } finally {
       setBusy(false);
     }
@@ -563,7 +610,20 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
                 }}
               >
                 <Settings2 size={15} />
-                配置
+                编辑
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`删除账号 ${item.name}`}
+                onClick={() => {
+                  setRemoving(item);
+                  setConfirmation("");
+                  setError("");
+                }}
+              >
+                <Trash2 size={14} />
+                删除
               </Button>
               <Button
                 variant="secondary"
@@ -644,7 +704,9 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       )}
       <Dialog
         open={adding}
-        onOpenChange={setAdding}
+        onOpenChange={(open) => {
+          if (!busy) setAdding(open);
+        }}
         title="添加上游账号"
         description="验证 API Key 后同步资源，密钥保存后不再回显。"
       >
@@ -694,13 +756,36 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       <Dialog
         open={!!editing}
         onOpenChange={(open) => {
-          if (!open) setEditing(null);
+          if (!open && !busy) setEditing(null);
         }}
-        title="账号配置"
-        description="预算是本地限制；修改国家仅影响后续补货。"
+        title="编辑上游账号"
+        description="账号 ID 保持不变。名称与套餐记录可编辑；本地计数不会因编辑而重置。"
       >
         {editing && (
-          <form className="form-stack" onSubmit={saveBudget}>
+          <form className="form-stack" onSubmit={saveAccount}>
+            <div className="account-id-note">
+              账号 ID：<code>{editing.account_id}</code>
+            </div>
+            <label>
+              显示名称
+              <input
+                name="name"
+                required
+                maxLength={64}
+                defaultValue={editing.name}
+              />
+            </label>
+            <label>
+              套餐流量记录（GB，手动配置）
+              <input
+                name="traffic_limit_gb"
+                type="number"
+                min={0}
+                step={1}
+                defaultValue={editing.traffic_limit_gb ?? ""}
+                placeholder="留空表示未记录"
+              />
+            </label>
             <label>
               本地替换预算
               <input
@@ -716,6 +801,13 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
                 name="replacement_country"
                 defaultValue={editing.replacement_country}
               >
+                {!["original", "any", "US", "GB", "DE", "JP"].includes(
+                  editing.replacement_country,
+                ) && (
+                  <option value={editing.replacement_country}>
+                    {editing.replacement_country}
+                  </option>
+                )}
                 <option value="original">保持原国家</option>
                 <option value="any">任意国家</option>
                 <option value="US">美国 US</option>
@@ -724,9 +816,92 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
                 <option value="JP">日本 JP</option>
               </select>
             </label>
-            {error && <p className="form-error">{error}</p>}
+            <details className="quality-advanced">
+              <summary>更新 API Key（选填）</summary>
+              <div className="quality-advanced-body">
+                <p className="field-help">
+                  留空保留当前密钥。更新前请暂停账号并结束业务；后台会只读验证密钥和资源一致性，校验失败保留原配置。
+                </p>
+                <label>
+                  新 API Key
+                  <input
+                    name="api_key"
+                    type="password"
+                    autoComplete="new-password"
+                    maxLength={256}
+                    minLength={16}
+                    placeholder="留空不修改"
+                  />
+                </label>
+              </div>
+            </details>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
             <Button disabled={busy} type="submit">
               保存配置
+            </Button>
+          </form>
+        )}
+      </Dialog>
+      <Dialog
+        open={!!removing}
+        onOpenChange={(open) => {
+          if (!open && !busy) setRemoving(null);
+        }}
+        title="移除上游账号"
+        description="仅删除本网关的账号接入，不注销 Webshare 账号、不退订套餐、不撤销供应商密钥，也不调用 Replace。"
+      >
+        {currentRemoval && (
+          <form className="form-stack" onSubmit={removeAccount}>
+            <div className="account-removal-note">
+              <strong>{currentRemoval.name}</strong>
+              <p>
+                {currentRemoval.account_id} ·{" "}
+                {deletion.data?.node_count ?? currentRemoval.node_count}{" "}
+                个受管出口将归档，不再参与分配；本地私有存储中的 API Key
+                和节点凭据会清理，历史计数与审计标识保留。
+              </p>
+            </div>
+            {currentRemoval.enabled && (
+              <Button
+                variant="secondary"
+                type="button"
+                disabled={busy}
+                onClick={() => void toggle(currentRemoval)}
+              >
+                先暂停该账号的新分配
+              </Button>
+            )}
+            {deletion.data?.reason && (
+              <p className="ops-warning">{deletion.data.reason}</p>
+            )}
+            <ErrorNote message={error || deletion.error} />
+            <label>
+              输入账号 ID 确认移除
+              <input
+                value={confirmation}
+                onChange={(e) => setConfirmation(e.target.value)}
+                placeholder={currentRemoval.account_id}
+                autoComplete="off"
+              />
+            </label>
+            <Button
+              type="submit"
+              disabled={
+                busy ||
+                !deletion.data?.allowed ||
+                confirmation !== currentRemoval.account_id
+              }
+            >
+              {busy ? (
+                <Loader2 className="spin" size={14} />
+              ) : (
+                <Trash2 size={14} />
+              )}
+              确认本地移除
             </Button>
           </form>
         )}
@@ -736,7 +911,28 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
 }
 
 function SettingsPage({ notify }: { notify: (message: string) => void }) {
+  const sections = [
+    ["scheduler", "调度与连接"],
+    ["quality", "质量检测源"],
+    ["retention", "数据生命周期"],
+    ["appearance", "外观主题"],
+    ["runtime", "运行配置"],
+  ] as const;
+  const initial =
+    new URLSearchParams(location.hash.split("?")[1]).get("tab") ?? "scheduler";
+  const [section, setSection] = useState(
+    sections.some(([id]) => id === initial) ? initial : "scheduler",
+  );
+  const [visited, setVisited] = useState<string[]>([section]);
   const query = useQuery<SettingsData>("/settings", true, 15000);
+  useEffect(() => {
+    history.replaceState(null, "", "#settings?tab=" + section);
+  }, [section]);
+  function chooseSection(id: string, focus = false) {
+    setSection(id);
+    setVisited((old) => (old.includes(id) ? old : [...old, id]));
+    if (focus) document.getElementById("settings-tab-" + id)?.focus();
+  }
   const [busy, setBusy] = useState(false);
   const [probeSaving, setProbeSaving] = useState(false);
   async function toggleProbe() {
@@ -844,143 +1040,226 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
   ];
   return (
     <div className="page-enter">
-      <AppearanceSettings />
-      <QualitySources notify={notify} />
-      <Retention notify={notify} />
+      <div
+        className="settings-tabs surface"
+        role="tablist"
+        aria-label="网关设置板块"
+      >
+        {sections.map(([id, label], index) => (
+          <button
+            type="button"
+            role="tab"
+            id={"settings-tab-" + id}
+            aria-controls={"settings-panel-" + id}
+            aria-selected={section === id}
+            tabIndex={section === id ? 0 : -1}
+            key={id}
+            onClick={() => chooseSection(id)}
+            onKeyDown={(event) => {
+              const target =
+                event.key === "ArrowRight"
+                  ? (index + 1) % sections.length
+                  : event.key === "ArrowLeft"
+                    ? (index + sections.length - 1) % sections.length
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? sections.length - 1
+                        : -1;
+              if (target >= 0) {
+                event.preventDefault();
+                chooseSection(sections[target][0], true);
+              }
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div
+        role="tabpanel"
+        id="settings-panel-appearance"
+        aria-labelledby="settings-tab-appearance"
+        hidden={section !== "appearance"}
+      >
+        {visited.includes("appearance") && <AppearanceSettings />}
+      </div>
+      <div
+        role="tabpanel"
+        id="settings-panel-quality"
+        aria-labelledby="settings-tab-quality"
+        hidden={section !== "quality"}
+      >
+        {visited.includes("quality") && <QualitySources notify={notify} />}
+      </div>
+      <div
+        role="tabpanel"
+        id="settings-panel-retention"
+        aria-labelledby="settings-tab-retention"
+        hidden={section !== "retention"}
+      >
+        {visited.includes("retention") && <Retention notify={notify} />}
+      </div>
       <ErrorNote message={query.error} />
       {query.data && (
         <>
-          <section className="surface settings-surface">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">SCHEDULER</span>
-                <h2>调度策略</h2>
-              </div>
-              <span className="small muted">修改后即时生效</span>
-            </div>
-            <form onSubmit={save}>
-              <div className="settings-fields">
-                <div className="setting-row probe-setting">
+          <div
+            role="tabpanel"
+            id="settings-panel-scheduler"
+            aria-labelledby="settings-tab-scheduler"
+            hidden={section !== "scheduler"}
+          >
+            {visited.includes("scheduler") && (
+              <section className="surface settings-surface">
+                <div className="section-heading">
                   <div>
-                    <label id="probe-switch-label">主动测活</label>
-                    <p>
-                      开启后立即检查未使用节点；关闭停止新测活，不影响已有业务连接。
-                    </p>
+                    <span className="eyebrow">SCHEDULER</span>
+                    <h2>调度策略</h2>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-labelledby="probe-switch-label"
-                    aria-checked={Boolean(query.data.values.probe_enabled)}
-                    disabled={busy || probeSaving}
-                    onClick={() => void toggleProbe()}
-                    className="probe-switch"
-                  >
-                    <span className="switch-track">
-                      <i />
-                    </span>
-                    <span>
-                      {probeSaving
-                        ? "保存中…"
-                        : query.data.values.probe_enabled
-                          ? "已开启"
-                          : "已关闭"}
-                    </span>
-                  </button>
+                  <span className="small muted">修改后即时生效</span>
                 </div>
-                <div className="setting-row">
-                  <div>
-                    <label htmlFor="connection_log_mode">连接明细记录</label>
-                    <p>
-                      聚合指标始终采集，明细可关闭；保留期限在数据生命周期中设置
-                    </p>
-                  </div>
-                  <select
-                    id="connection_log_mode"
-                    name="connection_log_mode"
-                    defaultValue={String(query.data.values.connection_log_mode)}
-                  >
-                    <option value="off">关闭</option>
-                    <option value="errors">仅失败</option>
-                    <option value="all">全量</option>
-                  </select>
-                </div>
-                {fields.map((field) => (
-                  <div className="setting-row" key={field.key}>
-                    <div>
-                      <label htmlFor={field.key}>{field.label}</label>
-                      <p>{field.detail}</p>
+                <form onSubmit={save}>
+                  <div className="settings-fields">
+                    <div className="setting-row probe-setting">
+                      <div>
+                        <label id="probe-switch-label">主动测活</label>
+                        <p>
+                          开启后立即检查未使用节点；关闭停止新测活，不影响已有业务连接。
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-labelledby="probe-switch-label"
+                        aria-checked={Boolean(query.data.values.probe_enabled)}
+                        disabled={busy || probeSaving}
+                        onClick={() => void toggleProbe()}
+                        className="probe-switch"
+                      >
+                        <span className="switch-track">
+                          <i />
+                        </span>
+                        <span>
+                          {probeSaving
+                            ? "保存中…"
+                            : query.data.values.probe_enabled
+                              ? "已开启"
+                              : "已关闭"}
+                        </span>
+                      </button>
                     </div>
-                    <input
-                      id={field.key}
-                      name={field.key}
-                      type="number"
-                      min={field.min}
-                      max={field.max}
-                      step="any"
-                      defaultValue={Number(query.data!.values[field.key])}
-                      required
-                    />
+                    <div className="setting-row">
+                      <div>
+                        <label htmlFor="connection_log_mode">
+                          连接明细记录
+                        </label>
+                        <p>
+                          聚合指标始终采集，明细可关闭；保留期限在数据生命周期中设置
+                        </p>
+                      </div>
+                      <select
+                        id="connection_log_mode"
+                        name="connection_log_mode"
+                        defaultValue={String(
+                          query.data.values.connection_log_mode,
+                        )}
+                      >
+                        <option value="off">关闭</option>
+                        <option value="errors">仅失败</option>
+                        <option value="all">全量</option>
+                      </select>
+                    </div>
+                    {fields.map((field) => (
+                      <div className="setting-row" key={field.key}>
+                        <div>
+                          <label htmlFor={field.key}>{field.label}</label>
+                          <p>{field.detail}</p>
+                        </div>
+                        <input
+                          id={field.key}
+                          name={field.key}
+                          type="number"
+                          min={field.min}
+                          max={field.max}
+                          step="any"
+                          defaultValue={Number(query.data!.values[field.key])}
+                          required
+                        />
+                      </div>
+                    ))}
+                    <div className="setting-row">
+                      <div>
+                        <label htmlFor="session_switch_mode">
+                          默认切换方式
+                        </label>
+                        <p>风控等立即停用场景可单次选择强制切换</p>
+                      </div>
+                      <select
+                        id="session_switch_mode"
+                        name="session_switch_mode"
+                        defaultValue={String(
+                          query.data.values.session_switch_mode,
+                        )}
+                      >
+                        <option value="graceful">平滑切换</option>
+                        <option value="hard">强制切换</option>
+                      </select>
+                    </div>
                   </div>
-                ))}
-                <div className="setting-row">
+                  <div className="settings-footer">
+                    <span>
+                      <ShieldCheck size={15} /> 持久化后生效，重启保留
+                    </span>
+                    <Button disabled={busy || probeSaving} type="submit">
+                      {busy && <Loader2 size={16} className="spin" />}保存设置
+                    </Button>
+                  </div>
+                </form>
+              </section>
+            )}
+          </div>
+          <div
+            role="tabpanel"
+            id="settings-panel-runtime"
+            aria-labelledby="settings-tab-runtime"
+            hidden={section !== "runtime"}
+          >
+            {visited.includes("runtime") && (
+              <section className="surface deployment-surface">
+                <div className="section-heading">
                   <div>
-                    <label htmlFor="session_switch_mode">默认切换方式</label>
-                    <p>风控等立即停用场景可单次选择强制切换</p>
+                    <span className="eyebrow">RUNTIME</span>
+                    <h2>运行配置</h2>
                   </div>
-                  <select
-                    id="session_switch_mode"
-                    name="session_switch_mode"
-                    defaultValue={String(query.data.values.session_switch_mode)}
-                  >
-                    <option value="graceful">平滑切换</option>
-                    <option value="hard">强制切换</option>
-                  </select>
+                  <span className="small muted">部署参数 · 只读</span>
                 </div>
-              </div>
-              <div className="settings-footer">
-                <span>
-                  <ShieldCheck size={15} /> 持久化后生效，重启保留
-                </span>
-                <Button disabled={busy || probeSaving} type="submit">
-                  {busy && <Loader2 size={16} className="spin" />}保存设置
-                </Button>
-              </div>
-            </form>
-          </section>
-          <section className="surface deployment-surface">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">RUNTIME</span>
-                <h2>运行配置</h2>
-              </div>
-              <span className="small muted">部署参数 · 只读</span>
-            </div>
-            <div className="deployment-grid">
-              <div>
-                <span>SOCKS5 入口</span>
-                <code>
-                  {query.data.deployment.socks_host}:
-                  {query.data.deployment.socks_port}
-                </code>
-              </div>
-              <div>
-                <span>HTTP 代理入口</span>
-                <code>
-                  {query.data.deployment.proxy_http_host}:
-                  {query.data.deployment.proxy_http_port}
-                </code>
-              </div>
-              <div>
-                <span>长连接无流量超时</span>
-                <strong>已禁用</strong>
-              </div>
-              <div>
-                <span>同 session 故障转移</span>
-                <strong>已开启</strong>
-              </div>
-            </div>
-          </section>
+                <div className="deployment-grid">
+                  <div>
+                    <span>SOCKS5 入口</span>
+                    <code>
+                      {query.data.deployment.socks_host}:
+                      {query.data.deployment.socks_port}
+                    </code>
+                  </div>
+                  <div>
+                    <span>HTTP 代理入口</span>
+                    <code>
+                      {query.data.deployment.proxy_http_host}:
+                      {query.data.deployment.proxy_http_port}
+                    </code>
+                  </div>
+                  <div>
+                    <span>长连接无流量超时</span>
+                    <strong>已禁用</strong>
+                  </div>
+                  <div>
+                    <span>同 session 故障转移</span>
+                    <strong>已开启</strong>
+                  </div>
+                </div>
+              </section>
+            )}
+          </div>
         </>
       )}
     </div>
@@ -1159,7 +1438,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.2</span>
+            <span className="version-tag">v0.2.3</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">

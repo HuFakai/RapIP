@@ -63,7 +63,8 @@ def main():
                         "name": "浏览器验证 · 模拟账号",
                         "replacement_budget": 2500,
                         "traffic_limit_gb": 250,
-                    }
+                    },
+                    {"account_id": "qaempty", "name": "可移除的模拟账号", "enabled": False},
                 ]
             )
         )
@@ -72,7 +73,15 @@ def main():
         async def healthy(node, timeout):
             return True
 
-        gateway = Gateway(config, provider_factory=lambda *args: provider, probe=healthy)
+        empty_provider = Provider()
+        empty_provider.rows = []
+        gateway = Gateway(
+            config,
+            provider_factory=lambda account, *args: (
+                empty_provider if account.account_id == "qaempty" else provider
+            ),
+            probe=healthy,
+        )
 
         async def network(node, policy):
             return {
@@ -89,13 +98,21 @@ def main():
         async def diagnostic(node):
             return {
                 "Head": {"IP": node.ip},
-                "Info": {"ASN": "12345", "Organization": "模拟 ISP，仅用于界面验证"},
-                "Type": {"Usage": {"IPinfo": "ISP", "ipapi": "ISP"}},
-                "Score": {"SCAMALYTICS": "0", "ipapi": "0.47%", "IPQS": "null"},
+                "Info": {"ASN": "62874", "Organization": "模拟机房，仅用于界面验证"},
+                "Type": {
+                    "Usage": {source: "机房" for source in ["IPinfo", "ipapi", "AbuseIPDB", "IP2LOCATION"]}
+                },
+                "Score": {
+                    "SCAMALYTICS": "0",
+                    "AbuseIPDB": "0",
+                    "IP2LOCATION": "91",
+                    "ipapi": "0.23%",
+                    "IPQS": "null",
+                },
                 "Factor": {
-                    "VPN": {"IPinfo": False},
-                    "Proxy": {"IPinfo": False},
-                    "Server": {"IPinfo": False, "ipapi": True},
+                    "VPN": {"IPinfo": False, "IP2LOCATION": True},
+                    "Proxy": {"IPinfo": False, "IP2LOCATION": True},
+                    "Server": {"IPinfo": True, "ipapi": True},
                 },
             }
 

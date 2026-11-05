@@ -35,6 +35,7 @@ export function trafficScale(values: (number | null)[], rate = false) {
   };
 }
 export const labels: Record<string, string> = {
+  account_delete: "移除上游账号",
   group_create: "创建资源组",
   group_update: "更新组策略",
   group_members: "调整组成员",

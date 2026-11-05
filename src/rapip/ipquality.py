@@ -14,6 +14,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from .models import GatewayError, IPState, uid
+from .quality_assessment import assess_report
 from .socks import close_writer, read_address, target_text, upstream_connect
 
 VENDOR = Path(__file__).parent / "vendor" / "ipquality"
@@ -71,7 +72,7 @@ class IPQualityReports:
             and report["ip"] == node.ip
             and report["checked_at"] >= time.time() - self.g.observer.retention.probe_log_days * 86400
         ):
-            return report
+            return {**report, "assessment": assess_report(report)}
         obs = self.g.observer
         if not hasattr(obs, "db"):
             return None
@@ -82,7 +83,10 @@ class IPQualityReports:
                 (node.ip, node.id, time.time() - obs.retention.probe_log_days * 86400),
             ) as cursor:
                 row = await cursor.fetchone()
-        return json.loads(row[0]) if row else None
+        if not row:
+            return None
+        report = json.loads(row[0])
+        return {**report, "assessment": assess_report(report)}
 
     async def run(self, node_id):
         if self.running:

@@ -45,6 +45,7 @@ class Gateway:
         self.replacements: dict[str, Replacement] = {}
         self.operations: dict[str, Operation] = {}
         self.idempotency: dict[str, dict] = {}
+        self.removed_accounts: dict[str, dict] = {}
         self.blacklist: dict[str, float] = {}
         self.retired: dict[str, float] = {}
         self.events: list[dict] = []
@@ -80,7 +81,7 @@ class Gateway:
             ("operations", Operation),
         ):
             setattr(self, name, {key: model(**value) for key, value in state.get(name, {}).items()})
-        for name in ("blacklist", "retired", "events", "counters", "idempotency"):
+        for name in ("blacklist", "retired", "events", "counters", "idempotency", "removed_accounts"):
             if name in state:
                 setattr(self, name, state[name])
         for key, value in state.get("settings", {}).items():
@@ -97,6 +98,11 @@ class Gateway:
             timeout=aiohttp.ClientTimeout(total=25, connect=8),
             connector=aiohttp.TCPConnector(limit=20, limit_per_host=10),
         )
+        if self.removed_accounts:
+            try:
+                await asyncio.to_thread(self._cleanup_removed_account_files)
+            except OSError:
+                log.warning("Removed account files require cleanup; deleted accounts remain disabled")
         self.reload_accounts()
         async with self.changed:
             for job in self.replacements.values():
@@ -122,10 +128,10 @@ class Gateway:
         return self
 
     def reload_accounts(self):
-        accounts = self.config.accounts()
+        accounts = [a for a in self.config.accounts() if a.account_id not in self.removed_accounts]
         if hasattr(self, "accounts"):
             existing = {a.account_id for a in accounts}
-            if not set(self.accounts).issubset(existing):
+            if not (set(self.accounts) - set(self.removed_accounts)).issubset(existing):
                 raise GatewayError("UNSUPPORTED_RELOAD", "首版不支持热删除账号", 400)
             for account in accounts:
                 previous = self.accounts.get(account.account_id)
@@ -185,7 +191,7 @@ class Gateway:
             },
             **{
                 name: getattr(self, name)
-                for name in ("blacklist", "retired", "events", "counters", "idempotency")
+                for name in ("blacklist", "retired", "events", "counters", "idempotency", "removed_accounts")
             },
             "settings": {**self.settings.public(), "probe_enabled": self.config.probe_enabled},
         }
@@ -580,6 +586,8 @@ class Gateway:
 
     async def sync_account(self, account_id: str):
         async with self.account_locks[account_id]:
+            if account_id not in self.accounts:
+                return
             if any(
                 job.account_id == account_id
                 and job.state in {"SUBMITTING", "PROCESSING", "RECONCILING", "UNCERTAIN"}
@@ -680,6 +688,8 @@ class Gateway:
 
         async def check(node_id):
             node = self.nodes[node_id]
+            if node.account_id not in self.accounts or node.state not in {IPState.FRESH, IPState.QUARANTINED}:
+                return
             if node_id in self.probing:
                 return
             self.probing.add(node_id)
@@ -1166,3 +1176,74 @@ class Gateway:
             private_json, self.config.config_dir / "accounts.json", [asdict(a) for a in accounts.values()]
         )
         self.reload_accounts()
+
+    def _cleanup_removed_account_files(self):
+        path = self.config.config_dir / "accounts.json"
+        accounts = [a for a in self.config.accounts() if a.account_id not in self.removed_accounts]
+        private_json(path, [asdict(a) for a in accounts])
+        path = self.config.config_dir / "secrets.json"
+        if path.exists():
+            keys = json.loads(path.read_text())
+            private_json(path, {k: v for k, v in keys.items() if k not in self.removed_accounts})
+
+    def account_idle_error(self, account_id):
+        ids = {n.id for n in self.nodes.values() if n.account_id == account_id}
+        if any(not b.released and b.node_id in ids for b in self.bindings.values()) or any(
+            t["node_id"] in ids for t in self.tunnels.values()
+        ):
+            return "账号仍有活跃绑定或连接，请先结束业务"
+        if any(
+            j.account_id == account_id and j.state not in {"COMPLETED", "FAILED"}
+            for j in self.replacements.values()
+        ):
+            return "账号仍有替换或待核对任务，请先处理"
+        if ids & (self.probing | self.quality.busy) or self.ipquality.running in ids:
+            return "账号资源仍在检测，请稍后重试"
+        if any(
+            n.id in ids and n.state in {IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
+            for n in self.nodes.values()
+        ):
+            return "账号资源仍在使用、排空或替换中"
+        return None
+
+    async def remove_account(self, account_id):
+        # Caller holds config_lock; account lock serializes against sync/replacement.
+        if account_id not in self.accounts and account_id not in self.removed_accounts:
+            raise GatewayError("NOT_FOUND", "账号不存在", 404)
+        async with self.account_locks.setdefault(account_id, asyncio.Lock()):
+            async with self.changed:
+                self._writable()
+                account = self.accounts.get(account_id)
+                if account and account.enabled:
+                    raise GatewayError("ACCOUNT_ENABLED", "请先暂停该账号的新分配，再删除", 409)
+                if problem := self.account_idle_error(account_id):
+                    raise GatewayError("ACCOUNT_BUSY", problem, 409)
+                self.removed_accounts[account_id] = {
+                    "name": account.name if account else self.removed_accounts[account_id]["name"],
+                    "at": time.time(),
+                }
+                archived = 0
+                for node in self.nodes.values():
+                    if node.account_id == account_id:
+                        archived += node.state != IPState.ARCHIVED
+                        node.state, node.reason = IPState.ARCHIVED, "上游账号已从本网关移除"
+                        node.username = node.password = ""
+                self.event("account", "上游账号已从本地移除；未调用供应商替换或退订", account_id=account_id)
+                # Persist the deletion marker first: a crash cannot re-admit this account.
+                await self._persist()
+                self.accounts.pop(account_id, None)
+                self.providers.pop(account_id, None)
+                self.account_health.pop(account_id, None)
+                self.changed.notify_all()
+            warning = None
+            try:
+                await asyncio.to_thread(self._cleanup_removed_account_files)
+            except OSError:
+                warning = "账号已移除，本地密钥文件清理未完成；重启时会重试清理"
+            return {
+                "account_id": account_id,
+                "removed": True,
+                "archived_nodes": archived,
+                "replace_calls": 0,
+                "warning": warning,
+            }

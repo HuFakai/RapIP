@@ -67,6 +67,9 @@ class AccountInput(Model):
 
 
 class AccountPatch(Model):
+    api_key: str | None = Field(default=None, min_length=16, max_length=256, repr=False)
+    traffic_limit_gb: int | None = Field(default=None, ge=0)
+
     name: str | None = Field(default=None, min_length=1, max_length=64)
     enabled: bool | None = None
     replacement_budget: int | None = Field(default=None, ge=0)
@@ -176,7 +179,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.2", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.3", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -367,8 +370,8 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
     @app.post(prefix + "/accounts", dependencies=[Depends(auth)], status_code=201)
     async def add_account(body: AccountInput):
         async with config_lock:
-            if body.account_id in gateway.accounts:
-                raise GatewayError("ACCOUNT_EXISTS", "账号 ID 已存在")
+            if body.account_id in gateway.accounts or body.account_id in gateway.removed_accounts:
+                raise GatewayError("ACCOUNT_EXISTS", "账号 ID 已存在或已留档，请使用新 ID")
             account = Account(**body.model_dump(exclude={"api_key"}))
             provider = gateway.provider_factory(account, body.api_key, gateway.client)
             try:
@@ -385,11 +388,43 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
             previous = gateway.accounts.get(account_id)
             if not previous:
                 raise HTTPException(404, "账号不存在")
-            changes = body.model_dump(exclude_unset=True)
-            if any(value is None for key, value in changes.items() if key != "replacement_budget"):
+            changes = body.model_dump(exclude_unset=True, exclude={"api_key"})
+            if any(
+                value is None
+                for key, value in changes.items()
+                if key not in {"replacement_budget", "traffic_limit_gb"}
+            ):
                 raise HTTPException(422, "参数不能为 null")
-            account = Account(**{**asdict(previous), **changes})
-            await gateway.save_account(account)
+            if "api_key" in body.model_fields_set and not body.api_key:
+                raise HTTPException(422, "密钥不能为空；不修改时请省略")
+            async with gateway.account_locks[account_id]:
+                if body.api_key:
+                    if previous.enabled:
+                        raise GatewayError("ACCOUNT_ENABLED", "更新密钥前请先暂停新分配", 409)
+                    if problem := gateway.account_idle_error(account_id):
+                        raise GatewayError("ACCOUNT_BUSY", problem, 409)
+                account = Account(**{**asdict(previous), **changes})
+                if body.api_key:
+                    account.api_key_env = ""
+                    provider = gateway.provider_factory(account, body.api_key, gateway.client)
+                    try:
+                        rows = await provider.list_nodes()
+                    except ProviderError:
+                        raise GatewayError(
+                            "ACCOUNT_VALIDATION_FAILED", "API Key 验证失败，原配置保持不变", 400
+                        ) from None
+                    old_ips = {
+                        n.ip
+                        for n in gateway.nodes.values()
+                        if n.account_id == account_id and n.state != IPState.ARCHIVED
+                    }
+                    if old_ips and old_ips != {r["proxy_address"] for r in rows}:
+                        raise GatewayError(
+                            "ACCOUNT_RESOURCE_MISMATCH",
+                            "新密钥对应的资源不一致；请先同步核对，其他账号请单独添加",
+                            409,
+                        )
+                await gateway.save_account(account, body.api_key)
         async with gateway.changed:
             gateway.event("account", "账号配置已更新", account_id=account_id)
             for job in gateway.replacements.values():
@@ -398,6 +433,28 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
             await gateway._persist()
             gateway.changed.notify_all()
         return {"ok": True}
+
+    @app.get(prefix + "/accounts/{account_id}/deletion-check", dependencies=[Depends(auth)])
+    async def deletion_check(account_id: str):
+        account = gateway.accounts.get(account_id)
+        if not account:
+            raise HTTPException(404, "账号不存在")
+        reason = "请先暂停该账号的新分配" if account.enabled else gateway.account_idle_error(account_id)
+        return {
+            "allowed": reason is None,
+            "reason": reason,
+            "node_count": sum(
+                n.account_id == account_id and n.state != IPState.ARCHIVED for n in gateway.nodes.values()
+            ),
+        }
+
+    @app.delete(prefix + "/accounts/{account_id}", dependencies=[Depends(auth)])
+    async def remove_account(account_id: str, request: Request):
+        async def action():
+            async with config_lock:
+                return await gateway.remove_account(account_id)
+
+        return await operate(request, "account_delete", {}, action)
 
     @app.get(prefix + "/bindings", dependencies=[Depends(auth)])
     async def bindings(request: Request, q: str = "", include_released: bool = False, group_id: str = ""):
@@ -430,6 +487,8 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 group_id = match[1]
         elif kind == "group_create":
             group_id = body.get("group_id", "")
+        elif match := re.search(r"/accounts/([A-Za-z0-9]+)$", request.url.path):
+            account_id = match[1]
         elif match := re.search(r"/nodes/([A-Za-z0-9]+)/", request.url.path):
             if node := gateway.nodes.get(match[1]):
                 group_id, account_id = node.group_id, node.account_id
@@ -562,7 +621,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "cookie_secure": config.cookie_secure,
                 "egress_mode": "configured_proxy" if config.egress_proxy else "direct",
                 "tunnel_idle_timeout": 0,
-                "version": "0.2.2",
+                "version": "0.2.3",
             },
         }
 

@@ -691,3 +691,227 @@ body {
     grid-template-columns: 1fr 1fr 1.5fr 1.5fr;
   }
 }
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+.settings-tabs button {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: #a7b3c5;
+  font-size: 14px;
+  cursor: pointer;
+}
+.settings-tabs button[aria-selected="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.settings-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+[role="tabpanel"][hidden] {
+  display: none !important;
+}
+.account-heading {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.account-id-note {
+  font-size: 13px;
+  color: #a8b5c8;
+  padding: 12px;
+  border: 1px solid #ffffff12;
+  border-radius: 7px;
+}
+.account-removal-note {
+  border: 1px solid #efbf7530;
+  background: #efbf7508;
+  border-radius: 9px;
+  padding: 16px;
+}
+.account-removal-note strong {
+  color: var(--status-warn);
+  font-size: 17px;
+}
+.account-removal-note p {
+  color: #bac4d2;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-top: 10px;
+}
+.quality-assessment {
+  display: grid;
+  gap: 16px;
+}
+.assessment-hero {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 24px;
+  border: 1px solid #ffffff20;
+  border-radius: 12px;
+  padding: 22px;
+  background: #ffffff03;
+  --assessment-color: #9aabc3;
+}
+.assessment-good {
+  --assessment-color: #70d2df;
+  border-color: #70d2df40;
+  background: #70d2df06;
+}
+.assessment-review {
+  --assessment-color: #efbf75;
+  border-color: #efbf7540;
+  background: #efbf7506;
+}
+.assessment-caution {
+  --assessment-color: #f295ac;
+  border-color: #f295ac40;
+  background: #f295ac06;
+}
+.assessment-score {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+.assessment-score > span {
+  font-size: 13px;
+  color: #b2bdcd;
+}
+.assessment-score > strong {
+  font-size: 56px;
+  line-height: 1.15;
+  letter-spacing: -2px;
+  font-weight: 600;
+  color: var(--assessment-color);
+}
+.assessment-score small {
+  font-size: 15px;
+  color: #8695ab;
+  letter-spacing: 0;
+  margin-left: 8px;
+}
+.assessment-score > b {
+  font-size: 14px;
+  color: var(--assessment-color);
+  font-weight: 500;
+}
+.assessment-identity {
+  border-left: 1px solid #ffffff15;
+  padding-left: 24px;
+  align-self: center;
+}
+.assessment-identity > span {
+  font-size: 12px;
+  color: #9aaac0;
+}
+.assessment-identity h3 {
+  font-size: 23px;
+  color: #e0e8f3;
+  line-height: 1.4;
+  margin: 9px 0;
+}
+.assessment-identity p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: #b1bdce;
+}
+.assessment-dimensions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.assessment-dimensions > div {
+  padding: 15px 18px;
+  border-radius: 9px;
+  border: 1px solid #ffffff12;
+  background: #ffffff02;
+  display: grid;
+  gap: 8px;
+}
+.assessment-dimensions span {
+  color: #9aaac0;
+  font-size: 13px;
+}
+.assessment-dimensions strong {
+  color: #b7d2ff;
+  font-size: 25px;
+  font-weight: 500;
+}
+.assessment-dimensions > div:nth-child(2) strong {
+  color: #c7afff;
+}
+.assessment-dimensions > div:nth-child(3) strong {
+  color: #efbf75;
+}
+.assessment-dimensions small {
+  font-size: 12px;
+  color: #8393a9;
+  margin-left: 6px;
+}
+.assessment-explanation {
+  padding: 3px 2px;
+}
+.assessment-explanation > strong {
+  font-size: 15px;
+  color: #dce5f3;
+}
+.assessment-explanation ul {
+  padding-left: 19px;
+  list-style: disc;
+  color: #acbbd0;
+  font-size: 14px;
+  line-height: 1.8;
+  margin-top: 10px;
+}
+.assessment-explanation p {
+  color: #efbf75;
+  font-size: 14px;
+  margin-top: 10px;
+}
+@media (max-width: 720px) {
+  .settings-tabs button {
+    padding: 11px 15px;
+  }
+  .assessment-hero {
+    grid-template-columns: 1fr;
+    padding: 18px;
+    gap: 18px;
+  }
+  .assessment-score {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+  .assessment-score > span {
+    grid-column: 1;
+  }
+  .assessment-score > strong {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    font-size: 44px;
+  }
+  .assessment-identity {
+    border-left: 0;
+    border-top: 1px solid #ffffff15;
+    padding: 16px 0 0;
+  }
+  .assessment-identity h3 {
+    font-size: 20px;
+  }
+  .assessment-dimensions > div {
+    padding: 12px;
+  }
+}
+.assessment-verdict {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #d3ddec;
+  margin: 0;
+  padding: 0 2px;
+}

@@ -6,7 +6,28 @@ import { date } from "@/lib/utils";
 import { Dialog } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { ErrorMessage, GroupLabel } from "./Common";
+interface Assessment {
+  summary: string;
+  version: string;
+  score: number | null;
+  grade: string;
+  profile: string;
+  network_type: string;
+  network_label: string;
+  type_confidence: string;
+  type_reason: string;
+  breakdown: {
+    reputation: number | null;
+    residential_fit: number | null;
+    privacy: number | null;
+  };
+  reasons: string[];
+  missing_dimensions: string[];
+  formula: string;
+  note: string;
+}
 interface Report {
+  assessment?: Assessment;
   ip: string;
   state: string;
   checked_at: number;
@@ -119,7 +140,8 @@ export function IPQualityDialog({
         <p className="field-help">
           只检测这个出口，不创建工位、不轮换
           IP，也不更改分组准入。会访问第三方查询服务并消耗少量代理流量；流媒体、邮件和
-          DNSBL 不在本次检测范围。不同来源的分值含义不同，不合并成万能评分。
+          DNSBL 不在本次检测范围。综合分采用公开的 RapIP
+          家宽场景规则，不代表业务成功率。
         </p>
         <ErrorMessage message={error || query.error} />
         {query.data?.busy && !query.data.running && (
@@ -140,6 +162,78 @@ export function IPQualityDialog({
         )}
         {report && (
           <>
+            {report.assessment && (
+              <div className="quality-assessment">
+                <div
+                  className={`assessment-hero assessment-${report.assessment.score === null ? "unknown" : report.assessment.score >= 75 ? "good" : report.assessment.score >= 50 ? "review" : "caution"}`}
+                >
+                  <div className="assessment-score">
+                    <span>{report.assessment.profile}</span>
+                    <strong>
+                      {report.assessment.score ?? "—"}
+                      <small>/ 100</small>
+                    </strong>
+                    <b>{report.assessment.grade}</b>
+                  </div>
+                  <div className="assessment-identity">
+                    <span>
+                      IP 类型 · 证据一致度{report.assessment.type_confidence}
+                    </span>
+                    <h3>{report.assessment.network_label}</h3>
+                    <p>{report.assessment.type_reason}</p>
+                  </div>
+                </div>
+                <p className="assessment-verdict">
+                  {report.assessment.summary}
+                </p>
+                <div className="assessment-dimensions">
+                  {[
+                    ["信誉参考", report.assessment.breakdown.reputation],
+                    ["家宽适配", report.assessment.breakdown.residential_fit],
+                    ["风险标签", report.assessment.breakdown.privacy],
+                  ].map(([title, value]) => (
+                    <div key={String(title)}>
+                      <span>{title}</span>
+                      <strong>
+                        {value ?? "—"}
+                        <small>/100</small>
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+                <div className="assessment-explanation">
+                  <strong>为什么这样判断</strong>
+                  {report.assessment.missing_dimensions.length > 0 && (
+                    <p>
+                      缺少{report.assessment.missing_dimensions.join("、")}
+                      证据，暂不能给出综合分。
+                    </p>
+                  )}
+                  <ul>
+                    {report.assessment.reasons.map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+                <details className="quality-advanced">
+                  <summary>评分规则与适用范围</summary>
+                  <div className="quality-advanced-body">
+                    <p>{report.assessment.formula}</p>
+                    <p className="field-help">
+                      机房最高 49、来源冲突最高 64；信誉来源不足 3 个时最高
+                      85，只有 1 个时最高 59。类型证据不足 2 个来源时最高
+                      69。风险标签覆盖不足 3 类时，风险标签分最高
+                      70。未知维度不按零分或满分处理。
+                    </p>
+                    <p className="field-help">
+                      {report.assessment.note}{" "}
+                      分高仅表示现有证据更符合家宽要求；低举报也不能证实家宽。版本：
+                      {report.assessment.version}
+                    </p>
+                  </div>
+                </details>
+              </div>
+            )}
             <div className="quality-report-summary">
               <div>
                 <span>评分来源</span>
@@ -167,47 +261,54 @@ export function IPQualityDialog({
                 查询未取得可用的质量证据，请稍后重试。此结果不代表 IP 质量差。
               </p>
             )}
-            <div className="ops-table-wrap">
-              <table className="ops-table">
-                <thead>
-                  <tr>
-                    <th>检测来源</th>
-                    <th>原始评分</th>
-                    <th>网络类型</th>
-                    {flags.map(([, name]) => (
-                      <th key={name}>{name}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {providers.map((source) => {
-                    const factorName =
-                      source === "SCAMALYTICS"
-                        ? "SCAMALYTICS"
-                        : source === "IP2LOCATION"
-                          ? "IP2LOCATION"
-                          : source;
-                    return (
-                      <tr key={source}>
-                        <td>{source}</td>
-                        <td className="mono">
-                          {report.Score?.[source] ?? "—"}
-                        </td>
-                        <td>{report.Type?.Usage?.[source] ?? "—"}</td>
-                        {flags.map(([key]) => (
-                          <td key={key}>
-                            <Flag value={report.Factor?.[key]?.[factorName]} />
-                          </td>
+            <details className="quality-advanced">
+              <summary>查看检测源原始评分与标签</summary>
+              <div className="quality-advanced-body">
+                <div className="ops-table-wrap">
+                  <table className="ops-table">
+                    <thead>
+                      <tr>
+                        <th>检测来源</th>
+                        <th>原始评分</th>
+                        <th>网络类型</th>
+                        {flags.map(([, name]) => (
+                          <th key={name}>{name}</th>
                         ))}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <p className="field-help">
-              “—”表示缺少数据或该来源不提供此指标；“否”仅代表该来源当前未标记此属性，不能证明目标业务一定可用。当前分组的质量等级仍按网络样本及已配置的官方检测源判定。
-            </p>
+                    </thead>
+                    <tbody>
+                      {providers.map((source) => {
+                        const factorName =
+                          source === "SCAMALYTICS"
+                            ? "SCAMALYTICS"
+                            : source === "IP2LOCATION"
+                              ? "IP2LOCATION"
+                              : source;
+                        return (
+                          <tr key={source}>
+                            <td>{source}</td>
+                            <td className="mono">
+                              {report.Score?.[source] ?? "—"}
+                            </td>
+                            <td>{report.Type?.Usage?.[source] ?? "—"}</td>
+                            {flags.map(([key]) => (
+                              <td key={key}>
+                                <Flag
+                                  value={report.Factor?.[key]?.[factorName]}
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="field-help">
+                  “—”表示缺少数据或该来源不提供此指标；“否”仅代表该来源当前未标记此属性，不能证明目标业务一定可用。当前分组的质量等级仍按网络样本及已配置的官方检测源判定。
+                </p>
+              </div>
+            </details>
             <details className="quality-advanced">
               <summary>原始参考数据与模块来源</summary>
               <div className="quality-advanced-body">
