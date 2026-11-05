@@ -173,11 +173,13 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
             工位 / Session
             <div className="ops-filter-row">
               <input
+                aria-label="筛选工位"
                 placeholder="worker"
                 value={worker}
                 onChange={(e) => change(setWorker)(e.target.value)}
               />
               <input
+                aria-label="筛选 Session"
                 placeholder="session"
                 value={session}
                 onChange={(e) => change(setSession)(e.target.value)}

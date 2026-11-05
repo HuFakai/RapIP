@@ -433,11 +433,16 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                     </div>
                   </td>
                   <td>
-                    {g.today_submitted} /{" "}
-                    {g.id === "default" ? "账号预算" : g.daily_limit}
-                    <small>
-                      本轮 {g.round_submitted} / {g.round_limit}
-                    </small>
+                    {g.id === "default" ? (
+                      <span className="muted">见账号本地计数</span>
+                    ) : (
+                      <>
+                        {g.today_submitted} / {g.daily_limit}
+                        <small>
+                          本轮 {g.round_submitted} / {g.round_limit}
+                        </small>
+                      </>
+                    )}
                   </td>
                   <td>
                     {g.id === "default" ? (
@@ -1050,6 +1055,7 @@ export function QualitySources({ notify }: { notify: (v: string) => void }) {
               <input
                 type="password"
                 name="key"
+                aria-label={`${source.id} API Key`}
                 autoComplete="new-password"
                 placeholder={
                   source.configured ? "已配置；留空保留原 Key" : "尚未配置"
