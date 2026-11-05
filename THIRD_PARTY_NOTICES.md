@@ -6,3 +6,5 @@
 - Country SVG flags are loaded on demand from [flag-icons](https://github.com/lipis/flag-icons), MIT license; terms are retained in `web/vendor/flag-icons.LICENSE` and included in the runtime image.
 
 - Historical charts use [Apache ECharts](https://echarts.apache.org/) (Apache-2.0), its rendering dependency zrender (BSD-3-Clause), and tslib (0BSD). Distribution terms are retained in `web/vendor/` and copied into the runtime image.
+
+- The standalone IP quality database runner uses [xykt/IPQuality](https://github.com/xykt/IPQuality), pinned to `b4f5c99e37e20411ef6311e90cf1ffb6dbb1c049`, AGPL-3.0. Upstream license, modified source, local reference data and the standalone wrapper are distributed under `src/rapip/vendor/ipquality/`, with changes documented in its README. The management interface links to the public source.

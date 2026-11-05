@@ -242,6 +242,22 @@ def register(app, gateway, auth, operate):
 
         return await operate(request, "read_only_probe", {}, action)
 
+    @app.get(prefix + "/nodes/{node_id}/ip-quality", dependencies=deps)
+    async def ipquality_report(node_id: str):
+        node = g.nodes.get(node_id)
+        if not node:
+            raise GatewayError("NOT_FOUND", "资源不存在", 404)
+        return {
+            "report": await g.ipquality.latest(node),
+            "running": g.ipquality.running == node_id,
+            "busy": g.ipquality.running is not None,
+            "node_ip": node.ip,
+        }
+
+    @app.post(prefix + "/nodes/{node_id}/ip-quality", dependencies=deps)
+    async def run_ipquality(node_id: str, request: Request):
+        return await operate(request, "ipquality_report", {}, lambda: g.ipquality.run(node_id))
+
     @app.get(prefix + "/overview", dependencies=deps)
     async def overview(
         range: Literal["15m", "1h", "6h", "24h", "7d"] = "1h",

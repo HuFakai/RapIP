@@ -287,7 +287,7 @@ export function Overview({
               <span className="eyebrow">THROUGHPUT</span>
               <h2>吞吐趋势</h2>
             </div>
-            <span>服务端采集 · B/s</span>
+            <span>服务端采集 · 自动换算单位</span>
           </div>
           <Chart
             label="服务端历史上传下载吞吐"

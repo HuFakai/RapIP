@@ -1,3 +1,4 @@
+import { createContext, useContext, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useQuery, type AccountData, type Paged } from "@/lib/api";
 import type { Group } from "@/lib/v2";
@@ -5,6 +6,8 @@ import { Button } from "../ui/button";
 import { date } from "@/lib/utils";
 
 const text: Record<string, string> = {
+  unsupported_command: "不支持 UDP / 该命令",
+  upstream_command: "不支持 UDP / 该命令（旧记录）",
   healthy: "正常",
   PASS: "质量通过",
   FAIL: "质量不合格",
@@ -149,4 +152,33 @@ export function Refresh({ onClick }: { onClick: () => void }) {
 }
 export function Time({ value }: { value?: number | null }) {
   return <span className="ops-time">{value ? date(value) : "—"}</span>;
+}
+
+const GroupNames = createContext<Group[] | undefined>(undefined);
+export function GroupNamesProvider({ children }: { children: ReactNode }) {
+  const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
+  return (
+    <GroupNames.Provider value={groups.data?.items}>
+      {children}
+    </GroupNames.Provider>
+  );
+}
+export function GroupLabel({
+  id,
+  showId = true,
+}: {
+  id?: string | null;
+  showId?: boolean;
+}) {
+  const groups = useContext(GroupNames);
+  if (!id) return <span>—</span>;
+  const name =
+    groups?.find((group) => group.id === id)?.name ??
+    (id === "default" ? "默认资源" : groups ? "已删除分组" : "读取分组…");
+  return (
+    <span className="group-label" title={`${name} / ${id}`}>
+      <span>{name}</span>
+      {showId && <small className="mono">{id}</small>}
+    </span>
+  );
 }

@@ -1,6 +1,6 @@
 # RapIP
 
-当前版本：**v0.2.1**。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
+当前版本：**v0.2.2**。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
 
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 
@@ -131,3 +131,5 @@ npm run build
 
 - [分组创建向导、状态配色与数据生命周期](docs/UX_AND_RETENTION.md)
 - [免费检测与开源 IPQuality 脚本复核方式](docs/FREE_IP_QUALITY.md)
+
+- v0.2.2：资源池支持逐 IP 的 IPQuality 数据库参考报告；分组展示名称和 ID；吞吐与累计流量自动适配 B/KB/MB/GB 等单位。报告与质量组准入规则独立，详见 [免费检测与模块说明](docs/FREE_IP_QUALITY.md)。

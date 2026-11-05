@@ -50,7 +50,6 @@ class HttpProxy(SocksServer):
                 authentication = [v for k, v in headers if k == "proxy-authorization"]
                 if len(authentication) != 1 or not authentication[0].startswith("Basic "):
                     result = "authentication_rejected"
-                    result = "authentication_rejected"
                     writer.write(
                         b'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="RapIP"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
                     )
@@ -92,6 +91,7 @@ class HttpProxy(SocksServer):
                 observation["target"] = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
             for attempt in range(2):
                 binding, node, generation = await self.gateway.acquire(route)
+                observation.update(account_id=node.account_id, group_id=node.group_id, ip=node.ip)
                 try:
                     upstream_reader, upstream_writer, _ = await upstream_connect(
                         node, target, egress_proxy=self.gateway.config.egress_proxy
@@ -214,6 +214,8 @@ class HttpProxy(SocksServer):
         except (GatewayError, UpstreamError) as error:
             result = error.code if isinstance(error, GatewayError) else "upstream_" + error.kind
             reason = "connect_failed"
+            if isinstance(error, UpstreamError):
+                observation["socks_reply"] = error.reply
             if not replied:
                 status = 503 if isinstance(error, GatewayError) else 502
                 writer.write(

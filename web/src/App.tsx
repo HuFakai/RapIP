@@ -52,6 +52,7 @@ import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { Nodes } from "./components/operations/Nodes";
+import { GroupLabel, GroupNamesProvider } from "./components/operations/Common";
 import { Retention } from "./components/operations/Retention";
 import { Groups, QualitySources } from "./components/operations/Groups";
 import { Connections } from "./components/operations/Connections";
@@ -379,8 +380,8 @@ function BindingsPage({
               <div className="binding-ip">
                 <span className="mono strong">{item.ip || "等待可用出口"}</span>
                 <span className="small muted">
-                  {item.group_id} · {item.country || "任意国家"} · 第{" "}
-                  {item.generation} 代
+                  <GroupLabel id={item.group_id} /> ·{" "}
+                  {item.country || "任意国家"} · 第 {item.generation} 代
                 </span>
               </div>
               <div>
@@ -1139,251 +1140,256 @@ export default function App() {
       />
     );
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <Brand />
-          <span className="version-tag">v0.2.1</span>
-        </div>
-        <div className="workspace-label">WORKSPACE</div>
-        <nav aria-label="主导航">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${pageId === item.id ? "active" : ""}`}
-              aria-label={item.label}
-              title={item.label}
-              onClick={() => navigate(item.id)}
-              aria-current={pageId === item.id ? "page" : undefined}
-            >
-              <item.icon size={18} strokeWidth={1.7} />
-              <span>{item.label}</span>
-              {item.id === "bindings" && !!statsQuery.data?.active_bindings && (
-                <small>{statsQuery.data.active_bindings}</small>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="private-badge">
-            <ShieldCheck size={17} />
-            <div>
-              <strong>私有工作空间</strong>
-              <span>单管理员 · 私有网关</span>
-            </div>
+    <GroupNamesProvider>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="sidebar-brand">
+            <Brand />
+            <span className="version-tag">v0.2.2</span>
           </div>
-          <button
-            className="logout-button"
-            aria-label="退出管理员登录"
-            onClick={() => void logout()}
-          >
-            <span className="avatar">A</span>
-            <span>
-              <strong>管理员</strong>
-              <small>admin</small>
-            </span>
-            <LogOut size={16} />
-          </button>
-        </div>
-      </aside>
-      <main className="workspace">
-        <div className="topbar">
-          <div className="breadcrumb">
-            <Menu size={15} />
-            <span>工作空间</span>
-            <ChevronRight size={13} />
-            <strong>{active.label}</strong>
-          </div>
-          <div className="topbar-status">
-            <span
-              className={`pulse-dot ${statsQuery.error ? "offline-dot" : ""}`}
-            />
-            <span>
-              {statsQuery.error
-                ? "连接中断"
-                : statsQuery.data?.ready
-                  ? "服务正常"
-                  : "等待就绪"}
-            </span>
-            <span className="topbar-divider" />
-            <span className="mono">
-              {settings.data?.deployment.version
-                ? `v${settings.data.deployment.version}`
-                : "RAPIP"}{" "}
-              / GATEWAY
-            </span>
-          </div>
-        </div>
-        <div className="content content-compact">
-          <header className="page-heading">
-            <div>
-              <span className="eyebrow">
-                {pageId === "overview"
-                  ? "GATEWAY OVERVIEW"
-                  : active.id.toUpperCase()}
-              </span>
-              <h1>
-                {active.label}
-                <span className="heading-dot">.</span>
-              </h1>
-              <p>{active.caption}</p>
-            </div>
-            <div className="heading-actions">
-              <span className="updated-label">
-                {statsQuery.updatedAt
-                  ? `更新于 ${new Date(statsQuery.updatedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
-                  : "正在获取状态"}
-              </span>
-              <Button
-                variant="secondary"
-                onClick={() => void sync()}
-                disabled={busy}
+          <div className="workspace-label">WORKSPACE</div>
+          <nav aria-label="主导航">
+            {navigation.map((item) => (
+              <button
+                key={item.id}
+                className={`nav-item ${pageId === item.id ? "active" : ""}`}
+                aria-label={item.label}
+                title={item.label}
+                onClick={() => navigate(item.id)}
+                aria-current={pageId === item.id ? "page" : undefined}
               >
-                <RefreshCw size={15} className={busy ? "spin" : ""} />
-                同步资源
-              </Button>
+                <item.icon size={18} strokeWidth={1.7} />
+                <span>{item.label}</span>
+                {item.id === "bindings" &&
+                  !!statsQuery.data?.active_bindings && (
+                    <small>{statsQuery.data.active_bindings}</small>
+                  )}
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="private-badge">
+              <ShieldCheck size={17} />
+              <div>
+                <strong>私有工作空间</strong>
+                <span>单管理员 · 私有网关</span>
+              </div>
             </div>
-          </header>
-          <ErrorNote message={statsQuery.error} />
-          {statsQuery.data?.probe_enabled === false && (
-            <div className="environment-note">
-              <CircleHelp size={16} />
-              <span>主动测活已关闭；已验证资源仍可使用，新节点保持隔离。</span>
-            </div>
-          )}
-          {pageId === "overview" && (
-            <Suspense
-              fallback={<p className="ops-footnote">正在加载运行看板…</p>}
+            <button
+              className="logout-button"
+              aria-label="退出管理员登录"
+              onClick={() => void logout()}
             >
-              <Overview
+              <span className="avatar">A</span>
+              <span>
+                <strong>管理员</strong>
+                <small>admin</small>
+              </span>
+              <LogOut size={16} />
+            </button>
+          </div>
+        </aside>
+        <main className="workspace">
+          <div className="topbar">
+            <div className="breadcrumb">
+              <Menu size={15} />
+              <span>工作空间</span>
+              <ChevronRight size={13} />
+              <strong>{active.label}</strong>
+            </div>
+            <div className="topbar-status">
+              <span
+                className={`pulse-dot ${statsQuery.error ? "offline-dot" : ""}`}
+              />
+              <span>
+                {statsQuery.error
+                  ? "连接中断"
+                  : statsQuery.data?.ready
+                    ? "服务正常"
+                    : "等待就绪"}
+              </span>
+              <span className="topbar-divider" />
+              <span className="mono">
+                {settings.data?.deployment.version
+                  ? `v${settings.data.deployment.version}`
+                  : "RAPIP"}{" "}
+                / GATEWAY
+              </span>
+            </div>
+          </div>
+          <div className="content content-compact">
+            <header className="page-heading">
+              <div>
+                <span className="eyebrow">
+                  {pageId === "overview"
+                    ? "GATEWAY OVERVIEW"
+                    : active.id.toUpperCase()}
+                </span>
+                <h1>
+                  {active.label}
+                  <span className="heading-dot">.</span>
+                </h1>
+                <p>{active.caption}</p>
+              </div>
+              <div className="heading-actions">
+                <span className="updated-label">
+                  {statsQuery.updatedAt
+                    ? `更新于 ${new Date(statsQuery.updatedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
+                    : "正在获取状态"}
+                </span>
+                <Button
+                  variant="secondary"
+                  onClick={() => void sync()}
+                  disabled={busy}
+                >
+                  <RefreshCw size={15} className={busy ? "spin" : ""} />
+                  同步资源
+                </Button>
+              </div>
+            </header>
+            <ErrorNote message={statsQuery.error} />
+            {statsQuery.data?.probe_enabled === false && (
+              <div className="environment-note">
+                <CircleHelp size={16} />
+                <span>
+                  主动测活已关闭；已验证资源仍可使用，新节点保持隔离。
+                </span>
+              </div>
+            )}
+            {pageId === "overview" && (
+              <Suspense
+                fallback={<p className="ops-footnote">正在加载运行看板…</p>}
+              >
+                <Overview
+                  key={routeKey}
+                  onNavigate={navigate}
+                  onConnect={() => setConnectionOpen(true)}
+                />
+              </Suspense>
+            )}
+            {pageId === "nodes" && <Nodes key={routeKey} notify={notify} />}
+            {pageId === "groups" && <Groups notify={notify} />}
+            {pageId === "connections" && (
+              <Connections key={routeKey} notify={notify} />
+            )}
+            {pageId === "bindings" && (
+              <BindingsPage
                 key={routeKey}
-                onNavigate={navigate}
+                onRotate={(item) => choose(item, "rotate")}
+                onRelease={(item) => choose(item, "release")}
                 onConnect={() => setConnectionOpen(true)}
               />
-            </Suspense>
-          )}
-          {pageId === "nodes" && <Nodes key={routeKey} notify={notify} />}
-          {pageId === "groups" && <Groups notify={notify} />}
-          {pageId === "connections" && (
-            <Connections key={routeKey} notify={notify} />
-          )}
-          {pageId === "bindings" && (
-            <BindingsPage
-              key={routeKey}
-              onRotate={(item) => choose(item, "rotate")}
-              onRelease={(item) => choose(item, "release")}
-              onConnect={() => setConnectionOpen(true)}
-            />
-          )}
-          {pageId === "accounts" && <AccountsPage notify={notify} />}
-          {pageId === "tasks" && <Tasks key={routeKey} />}
-          {pageId === "settings" && <SettingsPage notify={notify} />}
-          <footer className="workspace-footer">
-            <span>
-              <Network size={13} /> RapIP Gateway
-            </span>
-            <span>独占会话 · 受控轮换 · 异步补货</span>
-          </footer>
-        </div>
-      </main>
-      <ConnectionDialog
-        open={connectionOpen}
-        onOpenChange={setConnectionOpen}
-        settings={settings.data}
-        notify={notify}
-      />
-      <Dialog
-        open={!!target}
-        onOpenChange={(open) => {
-          if (!open && !busy) setTarget(null);
-        }}
-        title={action === "rotate" ? "轮换出口 IP" : "释放会话绑定"}
-        description={`工位 ${target?.worker || "匿名"} · 当前 ${target?.connections ?? 0} 条连接`}
-      >
-        <form className="form-stack" onSubmit={control}>
-          <div className="mode-options">
-            <button
-              type="button"
-              className={mode === "graceful" ? "selected" : ""}
-              onClick={() => setMode("graceful")}
-            >
-              <Workflow size={20} />
-              <strong>平滑{action === "rotate" ? "切换" : "释放"}</strong>
-              <span>已有连接继续排空</span>
-              {mode === "graceful" && (
-                <Check size={15} className="mode-check" />
-              )}
-            </button>
-            <button
-              type="button"
-              className={mode === "hard" ? "selected hard-selected" : ""}
-              onClick={() => setMode("hard")}
-            >
-              <Unplug size={20} />
-              <strong>强制{action === "rotate" ? "切换" : "释放"}</strong>
-              <span>立即关闭已有连接</span>
-              {mode === "hard" && <Check size={15} className="mode-check" />}
-            </button>
+            )}
+            {pageId === "accounts" && <AccountsPage notify={notify} />}
+            {pageId === "tasks" && <Tasks key={routeKey} />}
+            {pageId === "settings" && <SettingsPage notify={notify} />}
+            <footer className="workspace-footer">
+              <span>
+                <Network size={13} /> RapIP Gateway
+              </span>
+              <span>独占会话 · 受控轮换 · 异步补货</span>
+            </footer>
           </div>
-          {action === "rotate" && (
-            <>
-              <label>
-                Session 策略
-                <select
-                  value={sessionPolicy}
-                  onChange={(event) => setSessionPolicy(event.target.value)}
-                >
-                  <option value="keep">
-                    保留当前 session，客户端无需改用户名
-                  </option>
-                  <option value="new">创建新的 session</option>
-                </select>
-              </label>
-              {sessionPolicy === "new" && (
+        </main>
+        <ConnectionDialog
+          open={connectionOpen}
+          onOpenChange={setConnectionOpen}
+          settings={settings.data}
+          notify={notify}
+        />
+        <Dialog
+          open={!!target}
+          onOpenChange={(open) => {
+            if (!open && !busy) setTarget(null);
+          }}
+          title={action === "rotate" ? "轮换出口 IP" : "释放会话绑定"}
+          description={`工位 ${target?.worker || "匿名"} · 当前 ${target?.connections ?? 0} 条连接`}
+        >
+          <form className="form-stack" onSubmit={control}>
+            <div className="mode-options">
+              <button
+                type="button"
+                className={mode === "graceful" ? "selected" : ""}
+                onClick={() => setMode("graceful")}
+              >
+                <Workflow size={20} />
+                <strong>平滑{action === "rotate" ? "切换" : "释放"}</strong>
+                <span>已有连接继续排空</span>
+                {mode === "graceful" && (
+                  <Check size={15} className="mode-check" />
+                )}
+              </button>
+              <button
+                type="button"
+                className={mode === "hard" ? "selected hard-selected" : ""}
+                onClick={() => setMode("hard")}
+              >
+                <Unplug size={20} />
+                <strong>强制{action === "rotate" ? "切换" : "释放"}</strong>
+                <span>立即关闭已有连接</span>
+                {mode === "hard" && <Check size={15} className="mode-check" />}
+              </button>
+            </div>
+            {action === "rotate" && (
+              <>
                 <label>
-                  新 Session ID
-                  <input
-                    value={newSession}
-                    onChange={(event) => setNewSession(event.target.value)}
-                    pattern="[A-Za-z0-9]{1,64}"
-                    required
-                  />
+                  Session 策略
+                  <select
+                    value={sessionPolicy}
+                    onChange={(event) => setSessionPolicy(event.target.value)}
+                  >
+                    <option value="keep">
+                      保留当前 session，客户端无需改用户名
+                    </option>
+                    <option value="new">创建新的 session</option>
+                  </select>
                 </label>
-              )}
-            </>
-          )}
-          <div className="connection-hint">
-            <CircleHelp size={17} />
-            <p>
-              {action === "release"
-                ? "释放后当前 session 失效，业务需创建新 session。"
-                : "换号后新连接使用新出口。已有 TCP 不会迁移，强制切换后由客户端重连。"}
-            </p>
+                {sessionPolicy === "new" && (
+                  <label>
+                    新 Session ID
+                    <input
+                      value={newSession}
+                      onChange={(event) => setNewSession(event.target.value)}
+                      pattern="[A-Za-z0-9]{1,64}"
+                      required
+                    />
+                  </label>
+                )}
+              </>
+            )}
+            <div className="connection-hint">
+              <CircleHelp size={17} />
+              <p>
+                {action === "release"
+                  ? "释放后当前 session 失效，业务需创建新 session。"
+                  : "换号后新连接使用新出口。已有 TCP 不会迁移，强制切换后由客户端重连。"}
+              </p>
+            </div>
+            {operationError && (
+              <p className="form-error" role="alert">
+                {operationError}
+              </p>
+            )}
+            <Button
+              type="submit"
+              variant={mode === "hard" ? "destructive" : "default"}
+              disabled={busy}
+            >
+              {busy && <Loader2 size={16} className="spin" />}
+              {action === "rotate" ? "执行轮换" : "释放绑定"}
+            </Button>
+          </form>
+        </Dialog>
+        {toast && (
+          <div className="toast" role="status">
+            <Check size={17} />
+            <span>{toast}</span>
+            <button aria-label="关闭通知" onClick={() => setToast("")}>
+              <X size={15} />
+            </button>
           </div>
-          {operationError && (
-            <p className="form-error" role="alert">
-              {operationError}
-            </p>
-          )}
-          <Button
-            type="submit"
-            variant={mode === "hard" ? "destructive" : "default"}
-            disabled={busy}
-          >
-            {busy && <Loader2 size={16} className="spin" />}
-            {action === "rotate" ? "执行轮换" : "释放绑定"}
-          </Button>
-        </form>
-      </Dialog>
-      {toast && (
-        <div className="toast" role="status">
-          <Check size={17} />
-          <span>{toast}</span>
-          <button aria-label="关闭通知" onClick={() => setToast("")}>
-            <X size={15} />
-          </button>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </GroupNamesProvider>
   );
 }

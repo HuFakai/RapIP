@@ -1,11 +1,26 @@
 import { useEffect, useState } from "react";
-import { ArrowUpDown, Search, SlidersHorizontal, Zap } from "lucide-react";
+import {
+  ArrowUpDown,
+  Search,
+  SlidersHorizontal,
+  Zap,
+  FlaskConical,
+} from "lucide-react";
 import { useQuery, type NodeData, type Paged } from "@/lib/api";
 import { operation, queryString } from "@/lib/v2";
+import { IPQualityDialog } from "./IPQualityDialog";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { CountryFlag } from "../CountryFlag";
-import { ErrorMessage, Pages, Refresh, Scope, Status, Time } from "./Common";
+import {
+  GroupLabel,
+  ErrorMessage,
+  Pages,
+  Refresh,
+  Scope,
+  Status,
+  Time,
+} from "./Common";
 
 const columns = [
   ["group", "分组"],
@@ -29,7 +44,8 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
     [page, setPage] = useState(Math.max(1, Number(initial.get("page")) || 1)),
     [size, setSize] = useState(20),
     [selected, setSelected] = useState<NodeData | null>(null),
-    [busy, setBusy] = useState("");
+    [busy, setBusy] = useState(""),
+    [reportNode, setReportNode] = useState<NodeData | null>(null);
   const [visible, setVisible] = useState<string[]>(() => {
     try {
       const parsed = JSON.parse(
@@ -268,7 +284,11 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                   </span>
                   <small>{n.account_id}</small>
                 </td>
-                {has("group") && <td className="mono">{n.group_id}</td>}
+                {has("group") && (
+                  <td>
+                    <GroupLabel id={n.group_id} />
+                  </td>
+                )}
                 <td>
                   <Status state={n.state} />
                 </td>
@@ -312,6 +332,15 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                     <Button
                       variant="secondary"
                       size="sm"
+                      onClick={() => setReportNode(n)}
+                      aria-label={`查看 IP ${n.ip} 质量报告`}
+                    >
+                      <FlaskConical size={13} />
+                      质量
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={
                         !!busy ||
                         n.used ||
@@ -344,6 +373,11 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
         size={size}
         setSize={setSize}
       />
+      <IPQualityDialog
+        key={reportNode?.id ?? "closed"}
+        node={reportNode}
+        onClose={() => setReportNode(null)}
+      />
       <Dialog
         open={!!selected}
         onOpenChange={(open) => {
@@ -361,7 +395,9 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
             </div>
             <dl>
               <dt>资源组</dt>
-              <dd>{current.group_id}</dd>
+              <dd>
+                <GroupLabel id={current.group_id} />
+              </dd>
               <dt>账号</dt>
               <dd>{current.account_id}</dd>
               <dt>当前原因</dt>

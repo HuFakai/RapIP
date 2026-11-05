@@ -174,7 +174,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.1", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.2", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -428,6 +428,9 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 group_id = match[1]
         elif kind == "group_create":
             group_id = body.get("group_id", "")
+        elif match := re.search(r"/nodes/([A-Za-z0-9]+)/", request.url.path):
+            if node := gateway.nodes.get(match[1]):
+                group_id, account_id = node.group_id, node.account_id
         elif match := re.search(r"/bindings/([A-Za-z0-9]+)/", request.url.path):
             if binding := gateway.bindings.get(match[1]):
                 group_id = binding.group_id
@@ -557,7 +560,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "cookie_secure": config.cookie_secure,
                 "egress_mode": "configured_proxy" if config.egress_proxy else "direct",
                 "tunnel_idle_timeout": 0,
-                "version": "0.2.1",
+                "version": "0.2.2",
             },
         }
 

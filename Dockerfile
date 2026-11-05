@@ -6,6 +6,7 @@ COPY web/ ./
 RUN npm run build
 
 FROM python:3.13-slim
+RUN apt-get update && apt-get install -y --no-install-recommends bash curl jq bc ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY pyproject.toml requirements.lock ./

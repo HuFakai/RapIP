@@ -22,7 +22,7 @@ interface Storage {
 const fields = [
   ["success_log_hours", "成功连接日志", "小时", 1, 2160],
   ["error_log_days", "异常连接日志", "天", 1, 365],
-  ["probe_log_days", "测活明细", "天", 1, 365],
+  ["probe_log_days", "测活与质量报告", "天", 1, 365],
   ["metrics_days", "趋势统计", "天", 7, 365],
   ["operation_days", "已结束管理操作", "天", 1, 365],
   ["event_days", "运行事件", "天", 1, 365],

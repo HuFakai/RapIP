@@ -93,6 +93,8 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 
 质量筛查与库存语义：
 - default 组按基础健康准入；命名质量组只分配属于该组、策略版本匹配且证据未过期的 PASS 资源，不借用其他组。
+- 管理页面显示分组名称和 ID，代理路由始终使用 ID，不能把中文名称直接填入用户名。
+- 单 IP 的 IPQuality 参考报告与分组 PASS 分开。GET /api/v1/nodes/<NODE_ID>/ip-quality 读取报告；POST 同一路径提交独立数据库检测（需要管理授权和 Idempotency-Key），最长约 180 秒。报告不创建工位、不轮换 IP、不改变准入，不把 PARTIAL/UNKNOWN 当成 PASS。
 - 基础可用/稳定优先等级只检查网络；高质量等级需要配置对应检测源权限。UNKNOWN、PENDING、EXPIRED 不代表合格，缺 Key 或检测源限流不得判断为 IP 不合格。
 - 质量策略、自动更换开关与替换预算由管理员控制；网络超时不能触发客户端循环调用 rotate。自动更换只针对明确 FAIL，且受账号/全局/分组/本轮/席位预算约束。
 - 用完一批任务再切换 session；复用相同 group + worker + session 便于维持出口。多浏览器共享 worker 时，切换前统一停止该工位的新请求，防止旧 session 回流。

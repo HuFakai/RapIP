@@ -165,10 +165,11 @@ export async function operation(
   path: string,
   body: unknown = {},
   method = "POST",
+  polls = 90,
 ): Promise<Record<string, unknown>> {
   const accepted = await mutate<Operation>(path, body, method);
   let current = accepted;
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < polls; i++) {
     if (current.state === "COMPLETED") {
       refreshAll();
       return current.result;

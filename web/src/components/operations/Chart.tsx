@@ -1,3 +1,4 @@
+import { trafficScale } from "@/lib/utils";
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
 import { LineChart, BarChart } from "echarts/charts";
@@ -46,6 +47,19 @@ export function Chart({
     const color = getComputedStyle(document.documentElement)
       .getPropertyValue("--accent")
       .trim();
+    const traffic =
+      data.unit === " B/s" ||
+      data.unit === " B" ||
+      data.unit === "B/s" ||
+      data.unit === "B";
+    const scale = traffic
+      ? trafficScale(
+          data.series.flatMap((s) => s.values),
+          data.unit.trim() === "B/s",
+        )
+      : { divisor: 1, unit: data.unit.trim() };
+    const number = (v: number) =>
+      Number(v).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const option: EChartsCoreOption = {
       animation: !reduce,
@@ -57,23 +71,23 @@ export function Chart({
           description: `${data.label}。共 ${data.labels.length} 个时间点；缺测保留为空档。`,
         },
       },
-      textStyle: { color: "#8e9bb0", fontFamily: "inherit", fontSize: 10 },
-      grid: { top: 24, bottom: 44, left: 48, right: 16 },
+      textStyle: { color: "#8e9bb0", fontFamily: "inherit", fontSize: 12 },
+      grid: { top: 24, bottom: 44, left: 58, right: 16 },
       tooltip: {
         trigger: "axis",
         confine: true,
         backgroundColor: "#151a24",
         borderColor: "#394354",
-        textStyle: { color: "#d9e2f2", fontSize: 11 },
+        textStyle: { color: "#d9e2f2", fontSize: 13 },
         valueFormatter: (v: unknown) =>
-          `${Number(v).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}${data.unit}`,
+          `${number(Number(v))}${scale.unit ? " " + scale.unit : ""}`,
       },
       legend: {
         bottom: 0,
         left: 12,
         itemWidth: 12,
         itemHeight: 3,
-        textStyle: { color: "#8e9bb0", fontSize: 10 },
+        textStyle: { color: "#8e9bb0", fontSize: 12 },
       },
       xAxis: {
         type: "category",
@@ -81,29 +95,31 @@ export function Chart({
         boundaryGap: data.kind === "bar",
         axisLine: { lineStyle: { color: "#28303c" } },
         axisTick: { show: false },
-        axisLabel: { color: "#78859a", fontSize: 9, hideOverlap: true },
+        axisLabel: { color: "#78859a", fontSize: 12, hideOverlap: true },
       },
       yAxis: {
         type: "value",
-        name: data.unit,
-        nameTextStyle: { fontSize: 9, color: "#78859a" },
+        name: scale.unit,
+        nameTextStyle: { fontSize: 12, color: "#78859a" },
         splitNumber: 3,
         axisLabel: {
           color: "#78859a",
-          fontSize: 9,
+          fontSize: 12,
           formatter: (v: number) =>
-            v >= 1e6
-              ? `${(v / 1e6).toFixed(1)}M`
-              : v >= 1e3
-                ? `${(v / 1e3).toFixed(1)}k`
-                : `${v}`,
+            traffic
+              ? number(v)
+              : v >= 1e6
+                ? `${number(v / 1e6)}M`
+                : v >= 1e3
+                  ? `${number(v / 1e3)}k`
+                  : number(v),
         },
         splitLine: { lineStyle: { color: "#ffffff08" } },
       },
       series: data.series.map((s, i) => ({
         name: s.name,
         type: data.kind,
-        data: s.values,
+        data: s.values.map((v) => (v === null ? null : v / scale.divisor)),
         connectNulls: false,
         showSymbol: s.values.length < 3,
         symbolSize: 4,

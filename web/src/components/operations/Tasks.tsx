@@ -2,7 +2,14 @@ import { useState } from "react";
 import { useQuery, type EventData, type Paged, type TaskData } from "@/lib/api";
 import { queryString } from "@/lib/v2";
 import { labels } from "@/lib/utils";
-import { ErrorMessage, Pages, Refresh, Scope, Time } from "./Common";
+import {
+  GroupLabel,
+  ErrorMessage,
+  Pages,
+  Refresh,
+  Scope,
+  Time,
+} from "./Common";
 const states: Record<string, string> = {
   COMPLETED: "已完成",
   FAILED: "失败",
@@ -140,7 +147,7 @@ export function Tasks() {
                     </small>
                   </td>
                   <td>
-                    {t.group_id ?? "—"}
+                    <GroupLabel id={t.group_id} />
                     <small>{t.account_id ?? "—"}</small>
                   </td>
                   <td>

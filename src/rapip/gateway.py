@@ -13,6 +13,7 @@ from dataclasses import asdict
 import aiohttp
 
 from .config import Config, private_json
+from .ipquality import IPQualityReports
 from .models import Binding, GatewayError, IPState, Node, Operation, Replacement, Route, uid
 from .observability import Observability
 from .provider import ProviderError, Webshare
@@ -59,6 +60,7 @@ class Gateway:
         self.started_at = time.time()
         self.bytes_up = self.bytes_down = 0
         self.observer = Observability(config.data_dir)
+        self.ipquality = IPQualityReports(self)
         self.quality = QualityManager(self)
 
     async def start(self, background: bool = True, sync: bool = True):

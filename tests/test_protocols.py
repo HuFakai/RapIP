@@ -107,3 +107,29 @@ async def test_http_requires_authentication(gateway):
         await writer.wait_closed()
     finally:
         await server.stop()
+
+
+async def test_unsupported_udp_is_diagnostic_not_node_failure(gateway):
+    server = SocksServer(gateway)
+    await server.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.server.sockets[0].getsockname()[1])
+        writer.write(b"\x05\x01\x02")
+        await writer.drain()
+        assert await reader.readexactly(2) == b"\x05\x02"
+        user, password = b"admin-worker-01-session-udpcheck", b"test-socks-password"
+        writer.write(b"\x01" + bytes([len(user)]) + user + bytes([len(password)]) + password)
+        await writer.drain()
+        assert await reader.readexactly(2) == b"\x01\x00"
+        writer.write(b"\x05\x03\x00" + address_bytes("0.0.0.0", 0))
+        await writer.drain()
+        assert (await reader.readexactly(10))[1] == 7
+        writer.close()
+        await writer.wait_closed()
+        await asyncio.sleep(0.02)
+        logs = [r for kind, r in gateway.observer.queue if kind == "connection"]
+        assert logs[-1]["result"] == "unsupported_command" and logs[-1]["socks_command"] == 3
+        assert not gateway.bindings and gateway.test_provider.calls == 0
+        assert all(n.fail_count == 0 for n in gateway.nodes.values())
+    finally:
+        await server.stop()

@@ -207,12 +207,15 @@ class SocksServer:
                 await writer.drain()
                 request = await reader.readexactly(4)
                 if request[:3] != b"\x05\x01\x00":
-                    raise UpstreamError("command", 7)
+                    observation["socks_command"] = request[1]
+                    observation["socks_reply"] = 7
+                    raise UpstreamError("unsupported_command", 7)
                 target = bytes([request[3]]) + await read_address(reader, request[3])
                 target += await reader.readexactly(2)
                 observation["target"] = target_text(target)
             for attempt in range(2):
                 binding, node, generation = await self.gateway.acquire(route)
+                observation.update(account_id=node.account_id, group_id=node.group_id, ip=node.ip)
                 try:
                     upstream_reader, upstream_writer, reply = await upstream_connect(
                         node, target, egress_proxy=self.gateway.config.egress_proxy
@@ -247,7 +250,11 @@ class SocksServer:
                 group.create_task(pump(reader, upstream_writer, "up"))
                 group.create_task(pump(upstream_reader, writer, "down"))
         except UpstreamError as error:
-            result, reason = "upstream_" + error.kind, "upstream_error"
+            result = (
+                "unsupported_command" if error.kind == "unsupported_command" else "upstream_" + error.kind
+            )
+            reason = "unsupported_proxy_command" if error.kind == "unsupported_command" else "upstream_error"
+            observation["socks_reply"] = error.reply
             if not replied:
                 writer.write(bytes([5, error.reply, 0, 1]) + bytes(6))
                 with contextlib.suppress(OSError):

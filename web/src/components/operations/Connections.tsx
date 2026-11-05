@@ -3,7 +3,15 @@ import { api, refreshAll, useQuery, type Paged } from "@/lib/api";
 import { queryString, type ConnectionRecord } from "@/lib/v2";
 import { bytes } from "@/lib/utils";
 import { Dialog } from "../ui/dialog";
-import { ErrorMessage, Pages, Refresh, Scope, Status, Time } from "./Common";
+import {
+  GroupLabel,
+  ErrorMessage,
+  Pages,
+  Refresh,
+  Scope,
+  Status,
+  Time,
+} from "./Common";
 
 export function Connections({ notify }: { notify: (v: string) => void }) {
   const initial = new URLSearchParams(location.hash.split("?")[1]);
@@ -216,7 +224,7 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
                   </td>
                   <td className="mono">{r.protocol.toUpperCase()}</td>
                   <td>
-                    {r.group_id || "未鉴权"}
+                    {r.group_id ? <GroupLabel id={r.group_id} /> : "未鉴权"}
                     <small>
                       {r.worker || "匿名"} / {r.session || "—"}
                     </small>
@@ -284,7 +292,13 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
               }).map(([k, v]) => (
                 <div className="ops-dl-row" key={k}>
                   <dt>{k}</dt>
-                  <dd>{v || "—"}</dd>
+                  <dd>
+                    {k === "资源组" ? (
+                      <GroupLabel id={selected.group_id} />
+                    ) : (
+                      v || "—"
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>

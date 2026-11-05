@@ -10,9 +10,29 @@ export function date(value?: number | null) {
     : "尚未验证";
 }
 export function bytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  const index = Math.min(3, Math.floor(Math.log(value) / Math.log(1024)));
-  return `${(value / 1024 ** index).toFixed(1)} ${["B", "KB", "MB", "GB"][index]}`;
+  if (!Number.isFinite(value)) return "—";
+  const size = Math.abs(value);
+  const index =
+    size < 1
+      ? 0
+      : Math.min(5, Math.max(0, Math.floor(Math.log(size) / Math.log(1024))));
+  const amount = value / 1024 ** index;
+  return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: size === 0 ? 0 : index === 0 ? 1 : 2 }).format(amount)} ${["B", "KB", "MB", "GB", "TB", "PB"][index]}`;
+}
+export function trafficScale(values: (number | null)[], rate = false) {
+  const maximum = values.reduce<number>(
+    (max, value) =>
+      Number.isFinite(value) ? Math.max(max, Math.abs(value ?? 0)) : max,
+    0,
+  );
+  const index =
+    maximum < 1
+      ? 0
+      : Math.min(5, Math.floor(Math.log(maximum) / Math.log(1024)));
+  return {
+    divisor: 1024 ** index,
+    unit: ["B", "KB", "MB", "GB", "TB", "PB"][index] + (rate ? "/s" : ""),
+  };
 }
 export const labels: Record<string, string> = {
   group_create: "创建资源组",
@@ -22,6 +42,7 @@ export const labels: Record<string, string> = {
   quality_preview: "只读质量预览",
   quality_check: "质量筛查准入",
   quality_round: "新筛选轮次",
+  ipquality_report: "IPQuality 质量报告",
   read_only_probe: "单节点只读探测",
 
   FRESH: "可分配",

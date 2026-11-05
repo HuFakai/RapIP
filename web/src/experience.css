@@ -579,3 +579,115 @@ body {
   margin-left: 20px;
   margin-right: 20px;
 }
+.group-label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 220px;
+  vertical-align: middle;
+  white-space: normal;
+}
+.group-label > span {
+  color: #d6dfed;
+  overflow-wrap: anywhere;
+}
+.group-label > small {
+  font-size: 12px;
+  color: #8d9aad;
+  overflow-wrap: anywhere;
+}
+.ipquality-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.quality-report-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+.quality-report-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.quality-report-heading strong {
+  font-size: 20px;
+}
+.quality-report-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+  padding: 18px;
+  background: #84b5ff07;
+  border: 1px solid #84b5ff20;
+  border-radius: 9px;
+}
+.quality-report-summary > div {
+  display: grid;
+  gap: 8px;
+}
+.quality-report-summary span {
+  color: #9aa9be;
+  font-size: 13px;
+}
+.quality-report-summary strong {
+  color: #ccdcf5;
+  font-size: 15px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.quality-report-empty {
+  text-align: center;
+  padding: 32px 15px;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  color: #9aa9be;
+  font-size: 14px;
+  border: 1px dashed #ffffff18;
+  border-radius: 10px;
+}
+.quality-report-empty > svg {
+  color: var(--status-active);
+}
+.quality-report-empty p {
+  font-size: 13px;
+}
+.quality-flag {
+  color: #8491a3;
+}
+.quality-flag.is-flagged {
+  color: var(--status-warn);
+}
+.quality-flag.is-clear {
+  color: var(--status-good);
+}
+.ipquality-content pre {
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .quality-report-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .quality-report-heading > div {
+    gap: 12px;
+  }
+}
+.ipquality-content > * {
+  flex-shrink: 0;
+}
+@media (min-width: 900px) {
+  .quality-report-summary {
+    grid-template-columns: 1fr 1fr 1.5fr 1.5fr;
+  }
+}

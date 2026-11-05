@@ -85,6 +85,21 @@ def main():
             }
 
         gateway.quality.network_check = network
+
+        async def diagnostic(node):
+            return {
+                "Head": {"IP": node.ip},
+                "Info": {"ASN": "12345", "Organization": "模拟 ISP，仅用于界面验证"},
+                "Type": {"Usage": {"IPinfo": "ISP", "ipapi": "ISP"}},
+                "Score": {"SCAMALYTICS": "0", "ipapi": "0.47%", "IPQS": "null"},
+                "Factor": {
+                    "VPN": {"IPinfo": False},
+                    "Proxy": {"IPinfo": False},
+                    "Server": {"IPinfo": False, "ipapi": True},
+                },
+            }
+
+        gateway.ipquality.execute = diagnostic
         app = create_app(config, gateway, lifecycle=False)
 
         @asynccontextmanager
