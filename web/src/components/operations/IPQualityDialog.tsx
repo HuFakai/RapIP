@@ -1,3 +1,4 @@
+import { Ping0Report } from "./Ping0Report";
 import { useState } from "react";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { useQuery, type NodeData } from "@/lib/api";
@@ -45,6 +46,7 @@ interface Report {
   Factor: Record<string, Record<string, boolean | string | null>>;
 }
 interface Response {
+  enabled: boolean;
   report: Report | null;
   running: boolean;
   busy: boolean;
@@ -76,13 +78,7 @@ function Flag({ value }: { value?: boolean | string | null }) {
     </span>
   );
 }
-export function IPQualityDialog({
-  node,
-  onClose,
-}: {
-  node: NodeData | null;
-  onClose: () => void;
-}) {
+function XYReport({ node }: { node: NodeData | null }) {
   const query = useQuery<Response>(
     `/nodes/${node?.id ?? "none"}/ip-quality`,
     !!node,
@@ -106,15 +102,7 @@ export function IPQualityDialog({
   const report = query.data?.report,
     busy = running || query.data?.running;
   return (
-    <Dialog
-      wide
-      open={!!node}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title="IP 质量报告"
-      description="使用固定版本 xykt/IPQuality 的数据库检测模块，生成当前出口的参考报告。"
-    >
+    <div>
       <div className="ipquality-content">
         <div className="quality-report-heading">
           <div>
@@ -122,7 +110,7 @@ export function IPQualityDialog({
             <GroupLabel id={node?.group_id} />
           </div>
           <Button
-            disabled={busy || query.data?.busy}
+            disabled={busy || query.data?.busy || !query.data?.enabled}
             onClick={() => void run()}
           >
             {busy ? (
@@ -143,6 +131,11 @@ export function IPQualityDialog({
           DNSBL 不在本次检测范围。综合分采用公开的 RapIP
           家宽场景规则，不代表业务成功率。
         </p>
+        {!query.data?.enabled && query.data && (
+          <p className="ops-warning">
+            IPQuality 已关闭；可在网关设置 → 质量检测源启用。历史报告仍可查看。
+          </p>
+        )}
         <ErrorMessage message={error || query.error} />
         {query.data?.busy && !query.data.running && (
           <p className="ops-warning">
@@ -328,6 +321,64 @@ export function IPQualityDialog({
         <p className="field-help">
           报告按“测活与质量报告”保留策略清理。可关闭弹窗，任务会继续执行，稍后再次打开查看。
         </p>
+      </div>
+    </div>
+  );
+}
+
+export function IPQualityDialog({
+  node,
+  onClose,
+}: {
+  node: NodeData | null;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"ipquality" | "ping0">("ipquality");
+  return (
+    <Dialog
+      wide
+      open={!!node}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="IP 质量报告"
+      description="两种独立检测方式交叉参考，保留各自的评分含义，不改变分组准入。"
+    >
+      <div className="report-tabs" role="tablist" aria-label="质量报告来源">
+        {(["ipquality", "ping0"] as const).map((name) => (
+          <button
+            id={`report-tab-${name}`}
+            key={name}
+            role="tab"
+            aria-selected={tab === name}
+            aria-controls="quality-report-panel"
+            tabIndex={tab === name ? 0 : -1}
+            onKeyDown={(event) => {
+              if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+                event.preventDefault();
+                const next = tab === "ping0" ? "ipquality" : "ping0";
+                setTab(next);
+                document.getElementById(`report-tab-${next}`)?.focus();
+              }
+            }}
+            onClick={() => setTab(name)}
+          >
+            {name === "ipquality"
+              ? "IPQuality · 综合参考"
+              : "Ping0 · 风控与类型"}
+          </button>
+        ))}
+      </div>
+      <div
+        id="quality-report-panel"
+        role="tabpanel"
+        aria-labelledby={`report-tab-${tab}`}
+      >
+        {tab === "ipquality" ? (
+          <XYReport node={node} />
+        ) : (
+          node && <Ping0Report node={node} />
+        )}
       </div>
     </Dialog>
   );

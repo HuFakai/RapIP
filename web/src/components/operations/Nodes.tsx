@@ -1,3 +1,5 @@
+import { copyText } from "@/lib/browser";
+import { ProxyLinksDialog, type ProxyLink } from "./ProxyLinksDialog";
 import { TableLoading } from "../ui/loading";
 import { useEffect, useState } from "react";
 import {
@@ -7,7 +9,13 @@ import {
   Zap,
   FlaskConical,
 } from "lucide-react";
-import { useQuery, type NodeData, type Paged } from "@/lib/api";
+import {
+  mutate,
+  refreshAll,
+  useQuery,
+  type NodeData,
+  type Paged,
+} from "@/lib/api";
 import { operation, queryString } from "@/lib/v2";
 import { ReplacementDialog } from "./ReplacementDialog";
 import { IPQualityDialog } from "./IPQualityDialog";
@@ -49,6 +57,37 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
     [selected, setSelected] = useState<NodeData | null>(null),
     [busy, setBusy] = useState(""),
     [reportNode, setReportNode] = useState<NodeData | null>(null);
+  const [copyDialog, setCopyDialog] = useState(false);
+  async function copyProxy(node: NodeData, protocol: "socks5" | "http") {
+    setBusy(node.id);
+    try {
+      const result = await mutate<ProxyLink>("/proxy-links", {
+        node_id: node.id,
+      });
+      refreshAll();
+      await copyText(result.links[protocol]);
+      notify(
+        `${result.reserved ? "已预留此 IP 并复制" : "已复制当前绑定链接"} · 工位 ${result.worker_id ?? "匿名"}`,
+      );
+    } catch (e) {
+      notify((e as Error).message + "；若已预留可再次点击复制");
+    } finally {
+      setBusy("");
+      void query.refresh();
+    }
+  }
+  async function cancelReservation(node: NodeData) {
+    setBusy(node.id);
+    try {
+      await operation(`/bindings/${node.binding_id}/cancel-reservation`);
+      notify("预留已取消，旧链接失效；未消耗更换额度");
+      refreshAll();
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
   const [checked, setChecked] = useState<NodeData[]>([]);
   const [replacing, setReplacing] = useState<NodeData[] | null>(null);
   const [visible, setVisible] = useState<string[]>(() => {
@@ -140,6 +179,13 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
     query.data?.items.find((n) => n.id === selected?.id) ?? selected;
   return (
     <div className="surface ops-panel page-enter">
+      {copyDialog && (
+        <ProxyLinksDialog
+          initialGroup={group}
+          close={() => setCopyDialog(false)}
+          notify={notify}
+        />
+      )}
       {replacing && (
         <ReplacementDialog
           nodes={replacing}
@@ -177,21 +223,27 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
             onChange={(e) => change(setState)(e.target.value)}
           >
             <option value="">全部状态</option>
-            {["FRESH", "IN_USE", "DRAINING", "QUARANTINED", "REPLACING"].map(
-              (v) => (
-                <option key={v} value={v}>
+            {[
+              "FRESH",
+              "RESERVED",
+              "IN_USE",
+              "DRAINING",
+              "QUARANTINED",
+              "REPLACING",
+            ].map((v) => (
+              <option key={v} value={v}>
+                {
                   {
-                    {
-                      FRESH: "待分配",
-                      IN_USE: "使用中",
-                      DRAINING: "排空中",
-                      QUARANTINED: "隔离",
-                      REPLACING: "替换中",
-                    }[v]
-                  }
-                </option>
-              ),
-            )}
+                    FRESH: "待分配",
+                    RESERVED: "已预留·待连接",
+                    IN_USE: "使用中",
+                    DRAINING: "排空中",
+                    QUARANTINED: "隔离",
+                    REPLACING: "替换中",
+                  }[v]
+                }
+              </option>
+            ))}
           </select>
           <select
             aria-label="筛选质量"
@@ -218,6 +270,9 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
           </Button>
         </div>
         <div className="ops-filter-row">
+          <Button size="sm" type="button" onClick={() => setCopyDialog(true)}>
+            复制代理链接
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -406,10 +461,45 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                 )}
                 <td>
                   <div className="ops-inline-actions">
+                    {(["socks5", "http"] as const).map((protocol) => (
+                      <Button
+                        key={protocol}
+                        size="sm"
+                        variant="secondary"
+                        disabled={
+                          !!busy ||
+                          !["FRESH", "RESERVED", "IN_USE"].includes(n.state)
+                        }
+                        onClick={() => void copyProxy(n, protocol)}
+                        title={
+                          n.state === "FRESH"
+                            ? "立即预留此 IP 并复制完整链接"
+                            : "复制当前绑定的完整链接"
+                        }
+                      >
+                        {protocol.toUpperCase()}
+                      </Button>
+                    ))}
+                    {n.state === "RESERVED" && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={!!busy}
+                        onClick={() => void cancelReservation(n)}
+                      >
+                        取消预留
+                      </Button>
+                    )}
                     <Button
                       variant="secondary"
                       size="sm"
                       onClick={() => setReplacing([n])}
+                      disabled={n.state === "RESERVED"}
+                      title={
+                        n.state === "RESERVED"
+                          ? "请先使用链接或取消预留"
+                          : undefined
+                      }
                     >
                       更换 IP
                     </Button>
@@ -425,7 +515,12 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                       size="sm"
                       onClick={() => setReportNode(n)}
                       disabled={
-                        !["FRESH", "QUARANTINED", "IN_USE"].includes(n.state)
+                        ![
+                          "FRESH",
+                          "RESERVED",
+                          "QUARANTINED",
+                          "IN_USE",
+                        ].includes(n.state)
                       }
                       aria-label={`查看 IP ${n.ip} 质量报告`}
                     >
@@ -444,7 +539,7 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                       title="只读检测，不调用 Replace"
                     >
                       <Zap size={12} />
-                      {busy === n.id ? "检测中" : "探测"}
+                      {busy === n.id ? "处理中" : "探测"}
                     </Button>
                   </div>
                 </td>
@@ -526,7 +621,7 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
             )}
             <Button
               variant="secondary"
-              disabled={!!busy || current.used}
+              disabled={!!busy || current.used || current.state === "RESERVED"}
               onClick={() => void probe(current)}
             >
               执行只读探测

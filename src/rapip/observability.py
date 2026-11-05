@@ -305,7 +305,7 @@ class Observability:
         )
         await self.db.execute(
             """DELETE FROM records WHERE
-            (kind IN ('probe','ipquality') AND at<?) OR
+            (kind IN ('probe','ipquality','ping0') AND at<?) OR
             (kind='connection' AND result!='success' AND at<?) OR
             (kind='connection' AND result='success' AND at<?)""",
             (

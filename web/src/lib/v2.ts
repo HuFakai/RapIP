@@ -28,6 +28,13 @@ export const basicPolicy: Policy = {
   max_abuse_score: null,
 };
 export interface Group {
+  workers?: {
+    managed: boolean;
+    capacity: number;
+    occupied: number;
+    range: string;
+  };
+  reserved?: number;
   rotation?: import("@/components/operations/RotationDialog").RotationInfo;
   id: string;
   name: string;

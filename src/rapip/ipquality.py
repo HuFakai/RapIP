@@ -89,10 +89,17 @@ class IPQualityReports:
         return {**report, "assessment": assess_report(report)}
 
     async def run(self, node_id):
+        if not self.g.report_methods["ipquality"]:
+            raise GatewayError("METHOD_DISABLED", "IPQuality 检测已关闭，可在设置中启用", 403)
         if self.running:
             raise GatewayError("DIAGNOSTIC_BUSY", "已有 IPQuality 检测在执行，请稍后重试", 409)
         node = self.g.nodes.get(node_id)
-        if not node or node.state not in {IPState.FRESH, IPState.QUARANTINED, IPState.IN_USE}:
+        if not node or node.state not in {
+            IPState.FRESH,
+            IPState.RESERVED,
+            IPState.QUARANTINED,
+            IPState.IN_USE,
+        }:
             raise GatewayError("NODE_BUSY", "该资源正在退役或替换，暂不能生成质量报告", 409)
         if ipaddress.ip_address(node.ip).version != 4:
             raise GatewayError("UNSUPPORTED_IP", "当前独立检测入口仅支持 IPv4", 400)
@@ -114,6 +121,7 @@ class IPQualityReports:
             }
             if token != (node.ip, node.membership_version) or node.state not in {
                 IPState.FRESH,
+                IPState.RESERVED,
                 IPState.QUARANTINED,
                 IPState.IN_USE,
             }:

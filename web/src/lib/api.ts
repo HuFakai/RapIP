@@ -214,6 +214,7 @@ export interface BindingData {
   generations: Generation[];
 }
 export interface Stats {
+  reserved_count: number;
   probe_enabled: boolean;
   total_ips: number;
   fresh_count: number;

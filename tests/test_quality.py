@@ -39,7 +39,10 @@ def test_group_username_and_namespace():
     b = Route.parse("admin_group_collect_worker_01_session_first")
     assert a.group == "register" and a.country == "US" and a.slot != b.slot
     assert Route.parse("admin-worker-01-session-first").slot == "owner:worker:01"
-    assert Route.parse("admin-group-register-session-first").slot != Route.parse("admin-session-first").slot
+    assert (
+        Route.parse("admin-group-register-worker-01-session-first").slot
+        != Route.parse("admin-session-first").slot
+    )
     with pytest.raises(GatewayError):
         Route.parse("admin-group-register-group-collect-session-a")
 
@@ -58,6 +61,9 @@ async def test_only_selected_members_and_group_isolation(gateway, network):
 
 async def test_no_cross_group_fallback(gateway, network):
     await create_group(gateway, count=0)
+    gateway.workers.rules["register"]["managed"] = (
+        False  # exercise pool guard independently of worker validation
+    )
     with pytest.raises(GatewayError, match="没有符合|资源不足"):
         await gateway.acquire(Route.parse("admin-group-register-session-empty"))
     assert gateway.stats()["fresh_count"] == 6
@@ -69,7 +75,7 @@ async def test_member_uniqueness_and_active_move_rejected(gateway, network):
     with pytest.raises(GatewayError):
         await gateway.quality.members("collect", ids)
     await gateway.quality.run("register")
-    _, node, _ = await gateway.acquire(Route.parse("admin-group-register-session-first"))
+    _, node, _ = await gateway.acquire(Route.parse("admin-group-register-worker-01-session-first"))
     with pytest.raises(GatewayError):
         await gateway.quality.members("register", [node.id], remove=True)
 

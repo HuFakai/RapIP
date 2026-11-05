@@ -407,6 +407,7 @@ function BindingsPage({
                 <Button
                   variant="secondary"
                   size="sm"
+                  disabled={item.status === "RESERVED"}
                   onClick={() => onRotate(item)}
                 >
                   <RefreshCw size={14} />换 IP
@@ -414,7 +415,7 @@ function BindingsPage({
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`释放工位 ${item.worker || item.session}`}
+                  aria-label={`${item.status === "RESERVED" ? "取消预留工位" : "释放工位"} ${item.worker || item.session}`}
                   onClick={() => onRelease(item)}
                 >
                   <Unplug size={16} />
@@ -1583,8 +1584,8 @@ export default function App() {
           };
     try {
       const op = await mutate<TaskData>(
-        `/bindings/${target.id}/${action}`,
-        body,
+        `/bindings/${target.id}/${action === "release" && target.status === "RESERVED" ? "cancel-reservation" : action}`,
+        action === "release" && target.status === "RESERVED" ? {} : body,
       );
       setTarget(null);
       notify("操作已受理，正在等待执行结果");
@@ -1628,7 +1629,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.5</span>
+            <span className="version-tag">v0.2.6</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">
@@ -1787,34 +1788,44 @@ export default function App() {
           onOpenChange={(open) => {
             if (!open && !busy) setTarget(null);
           }}
-          title={action === "rotate" ? "轮换出口 IP" : "释放会话绑定"}
+          title={
+            action === "rotate"
+              ? "轮换出口 IP"
+              : target?.status === "RESERVED"
+                ? "取消未使用预留"
+                : "释放会话绑定"
+          }
           description={`工位 ${target?.worker || "匿名"} · 当前 ${target?.connections ?? 0} 条连接`}
         >
           <form className="form-stack" onSubmit={control}>
-            <div className="mode-options">
-              <button
-                type="button"
-                className={mode === "graceful" ? "selected" : ""}
-                onClick={() => setMode("graceful")}
-              >
-                <Workflow size={20} />
-                <strong>平滑{action === "rotate" ? "切换" : "释放"}</strong>
-                <span>已有连接继续排空</span>
-                {mode === "graceful" && (
-                  <Check size={15} className="mode-check" />
-                )}
-              </button>
-              <button
-                type="button"
-                className={mode === "hard" ? "selected hard-selected" : ""}
-                onClick={() => setMode("hard")}
-              >
-                <Unplug size={20} />
-                <strong>强制{action === "rotate" ? "切换" : "释放"}</strong>
-                <span>立即关闭已有连接</span>
-                {mode === "hard" && <Check size={15} className="mode-check" />}
-              </button>
-            </div>
+            {target?.status !== "RESERVED" && (
+              <div className="mode-options">
+                <button
+                  type="button"
+                  className={mode === "graceful" ? "selected" : ""}
+                  onClick={() => setMode("graceful")}
+                >
+                  <Workflow size={20} />
+                  <strong>平滑{action === "rotate" ? "切换" : "释放"}</strong>
+                  <span>已有连接继续排空</span>
+                  {mode === "graceful" && (
+                    <Check size={15} className="mode-check" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={mode === "hard" ? "selected hard-selected" : ""}
+                  onClick={() => setMode("hard")}
+                >
+                  <Unplug size={20} />
+                  <strong>强制{action === "rotate" ? "切换" : "释放"}</strong>
+                  <span>立即关闭已有连接</span>
+                  {mode === "hard" && (
+                    <Check size={15} className="mode-check" />
+                  )}
+                </button>
+              </div>
+            )}
             {action === "rotate" && (
               <>
                 <label>
@@ -1846,7 +1857,9 @@ export default function App() {
               <CircleHelp size={17} />
               <p>
                 {action === "release"
-                  ? "释放后当前 session 失效，业务需创建新 session。"
+                  ? target?.status === "RESERVED"
+                    ? "取消后旧链接失效，原 IP 返回待分配池，不调用供应商更换 API。若已被使用会拒绝取消，请刷新。"
+                    : "释放后当前 session 失效，业务需创建新 session。"
                   : "换号后新连接使用新出口。已有 TCP 不会迁移，强制切换后由客户端重连。"}
               </p>
             </div>

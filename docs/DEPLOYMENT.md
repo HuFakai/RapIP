@@ -203,3 +203,21 @@ docker compose exec gateway python -m rapip.diagnostics
 当前有效 session 与原 IP 长期保留。更新、重启导致 TCP 断开，但不再退役当前 IN_USE 节点或设置 300 秒重连期限。无连接时可以备份/更新并保留绑定，不必等待绑定数为 0；正在排空的旧代次和已提交 Replace 仍需完成对账。实际入口取 RAPIP_PUBLIC_PROXY_HOST / RAPIP_PUBLIC_SOCKS_PORT / RAPIP_PUBLIC_HTTP_PROXY_PORT，0.0.0.0 仅是监听地址。
 
 本版持久化 schema 3，包含轮换授权、额度预留与手动等待任务。回退须停服务并同时恢复发布前数据库、配置和旧镜像，不能只换旧代码。定时轮换升级后全部默认关闭；session_idle_timeout 的旧值被忽略，不迁移为轮换授权。
+
+
+## v0.2.6 升级与验收
+
+本版后端和页面必须同时更新，持久化升级到 schema 4。先记录各账号 submitted/completed/redraws 与当前绑定，再选择业务连接空档，备份 `.env`、`config/`、`data/` 和当前镜像。继续使用 Docker Compose 构建和启动：
+
+```sh
+git pull --ff-only
+docker compose build
+docker compose up -d --no-deps gateway
+docker compose ps
+```
+
+生产数据迁移不可只回退代码。需回退时先停服务，再成套恢复升级前数据、配置与镜像。恢复旧备份会撤回备份之后的预留与报告；应先核对供应商任务状态，禁止重放不明 Replace。
+
+验收：原绑定 / IP / 更换计数保持；质量检测源可分别开关；报告标签页能独立读取；IP 行内复制已绑定资源不改变其 session；模拟环境验证行内预留与取消、两个协议同身份、首次连接启用、普通配置使用后生成下一份、池耗尽、并发及重启。不要用真实节点释放测试来消耗更换额度。
+
+Ping0 为第三方公开查询页，返回结构、限流和数据库标签可变。服务器需能够访问 `https://ping0.cc`；查询失败会明确显示错误并提供源网页链接，不做验证码绕过、不判断 IP 不合格、不触发自动替换。大模型检测通过源网页手动执行。

@@ -54,6 +54,7 @@ export const labels: Record<string, string> = {
   ipquality_report: "IPQuality 质量报告",
   read_only_probe: "单节点只读探测",
 
+  RESERVED: "已预留·待连接",
   FRESH: "可分配",
   IN_USE: "使用中",
   DRAINING: "排空中",

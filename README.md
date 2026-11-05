@@ -1,6 +1,6 @@
 # RapIP
 
-当前版本：**v0.2.5**。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
+当前版本：**v0.2.6**。行内复制可预留指定 IP，普通待用链接按空闲工位生成；IPQuality / Ping0 双报告独立开关，见 [v0.2.6 发布说明](docs/RELEASE_V0.2.6.md)。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
 
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 

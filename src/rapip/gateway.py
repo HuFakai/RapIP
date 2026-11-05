@@ -15,6 +15,7 @@ from .config import Config, private_json
 from .ipquality import IPQualityReports
 from .models import Binding, GatewayError, IPState, Node, Operation, Replacement, Route, uid
 from .observability import Observability
+from .ping0 import Ping0Reports
 from .provider import ProviderError, Webshare
 from .quality import QualityManager
 from .quotas import public_usage
@@ -22,6 +23,7 @@ from .retention import RetentionPolicy
 from .rotation import RotationManager
 from .socks import probe_node
 from .storage import Storage
+from .workers import Workers
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +71,9 @@ class Gateway:
         self.ipquality = IPQualityReports(self)
         self.quality = QualityManager(self)
         self.rotation = RotationManager(self)
+        self.workers = Workers(self)
+        self.ping0 = Ping0Reports(self)
+        self.report_methods = {"ipquality": True, "ping0": True}
 
     async def start(self, background: bool = True, sync: bool = True):
         self.config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -109,6 +114,8 @@ class Gateway:
         self.observer.retention = RetentionPolicy.model_validate(state.get("retention", {}))
         self.quality.load(state.get("quality", {}))
         self.rotation.load(state.get("rotation", {}))
+        self.workers.load(state.get("workers", {}))
+        self.report_methods.update(state.get("report_methods", {}))
         self.settings.auto_failover = False  # v0.2.5: opt in per group, never inherit legacy global True
         await self.observer.open()
         self.client = aiohttp.ClientSession(
@@ -145,7 +152,11 @@ class Gateway:
                     binding.last_detached = time.time()
                     binding.rotation = {}  # resume a full interval only after real successful connection
                     node = self.nodes.get(binding.node_id)
-                    if node and node.state == IPState.IN_USE and node.binding_id == binding.id:
+                    if (
+                        node
+                        and node.state in {IPState.IN_USE, IPState.RESERVED}
+                        and node.binding_id == binding.id
+                    ):
                         binding.unavailable = ""
                     else:
                         binding.unavailable = "原出口不可用，等待核对或显式更换"
@@ -213,8 +224,12 @@ class Gateway:
         self.owner_file.close()
 
     def _snapshot(self):
+        for group in self.quality.groups:
+            self.workers.remember_capacity(group)
         return {
-            "schema": 3,
+            "schema": 4,
+            "workers": self.workers.snapshot(),
+            "report_methods": self.report_methods,
             "rotation": self.rotation.snapshot(),
             "quality": self.quality.snapshot(),
             "bytes_up": self.bytes_up,
@@ -313,10 +328,17 @@ class Gateway:
                             + "；请使用新的 session",
                         )
                     binding = self.binding_for(route.slot)
+                    self.workers.validate(route, binding)
+                    self.workers.remember_capacity(route.group)
                     if binding and binding.session == route.session:
                         if binding.country != route.country:
                             raise GatewayError("COUNTRY_CONFLICT", "同一 session 不能修改国家条件")
                         node = self.nodes.get(binding.node_id)
+                        if node and node.state == IPState.RESERVED:
+                            node.state, node.used, binding.reserved = IPState.IN_USE, True, False
+                            self.workers.consume(route)
+                            node.reason = "预留链接已启用，会话独占"
+                            await self._persist()
                         if node and node.state == IPState.IN_USE:
                             binding.last_active = time.time()
                             return binding, node, binding.generation
@@ -382,6 +404,7 @@ class Gateway:
         else:
             binding.node_id, binding.last_active = node.id, time.time()
         binding.unavailable = ""
+        binding.reserved = False
         node.state, node.used, node.binding_id, node.generation = (
             IPState.IN_USE,
             True,
@@ -389,6 +412,7 @@ class Gateway:
             binding.generation,
         )
         node.reason = "会话独占"
+        self.workers.consume(route)
         self.event(
             "binding",
             "分配出口",
@@ -468,6 +492,7 @@ class Gateway:
             )
         old_session = binding.session
         binding.unavailable = ""
+        binding.reserved = False
         binding.rotation = {}
         binding.session, binding.country = session, country
         binding.policy_version = self.quality.groups[binding.group_id]["version"]
@@ -485,6 +510,11 @@ class Gateway:
         node.reason = "会话独占"
         retire = draining + ([old] if old else [])
         for previous in retire:
+            if previous.state == IPState.RESERVED and not previous.used:
+                previous.binding_id = None
+                previous.state = IPState.FRESH if self.quality.eligible(previous) else IPState.QUARANTINED
+                previous.reason = "未使用预留已解除"
+                continue
             self.blacklist[previous.ip] = time.time() + self.settings.blacklist_ttl
             if mode == "graceful" and self._count_node(previous.id):
                 previous.state, previous.drain_until = (
@@ -540,7 +570,13 @@ class Gateway:
                 )
                 return self.public_binding(binding)
 
-    async def release(self, binding_id: str, mode: str = "graceful", expected: int | None = None):
+    async def release(
+        self,
+        binding_id: str,
+        mode: str = "graceful",
+        expected: int | None = None,
+        reservation_only: bool = False,
+    ):
         binding = self.bindings.get(binding_id)
         if not binding or binding.released:
             raise GatewayError("NOT_FOUND", "绑定不存在", 404)
@@ -549,6 +585,10 @@ class Gateway:
                 self._writable()
                 if expected is not None and binding.generation != expected:
                     raise GatewayError("VERSION_CONFLICT", "绑定已变化，请刷新")
+                if reservation_only:
+                    node = self.nodes.get(binding.node_id)
+                    if not binding.reserved or not node or node.state != IPState.RESERVED or node.used:
+                        raise GatewayError("RESERVATION_USED", "预留已被连接使用，未取消或更换，请刷新")
                 self._release(binding, mode)
                 await self._persist()
                 if mode == "hard":
@@ -569,6 +609,10 @@ class Gateway:
         binding.rotation = {}
         self.retired[f"{binding.slot}:{binding.session}"] = time.time() + self.settings.retired_session_ttl
         for node in self.nodes.values():
+            if node.binding_id == binding.id and node.state == IPState.RESERVED and not node.used:
+                node.binding_id = None
+                node.state = IPState.FRESH if self.quality.eligible(node) else IPState.QUARANTINED
+                node.reason = "未使用预留已取消，不消耗更换额度"
             if node.binding_id == binding.id and node.state in {IPState.IN_USE, IPState.DRAINING}:
                 self.blacklist[node.ip] = time.time() + self.settings.blacklist_ttl
                 if mode == "graceful" and self._count_node(node.id):
@@ -855,7 +899,8 @@ class Gateway:
             if node.state == IPState.ARCHIVED and node.binding_id in self.bindings:
                 binding = self.bindings[node.binding_id]
                 if not binding.released and binding.node_id == node.id:
-                    node.state, node.reason = IPState.IN_USE, "原出口重新出现，恢复保留绑定"
+                    node.state = IPState.RESERVED if binding.reserved else IPState.IN_USE
+                    node.reason = "原出口重新出现，恢复保留绑定"
                     binding.unavailable = ""
             if node.state == IPState.QUARANTINED and not node.used:
                 if not self.config.probe_enabled:
@@ -867,7 +912,8 @@ class Gateway:
         return self.blacklist.get(node.ip, 0) > time.time() or any(
             n.id != node.id
             and n.ip == node.ip
-            and n.state in {IPState.FRESH, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
+            and n.state
+            in {IPState.FRESH, IPState.RESERVED, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
             for n in self.nodes.values()
         )
 
@@ -911,7 +957,13 @@ class Gateway:
                         other.id != node.id
                         and other.ip == node.ip
                         and other.state
-                        in {IPState.FRESH, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
+                        in {
+                            IPState.FRESH,
+                            IPState.RESERVED,
+                            IPState.IN_USE,
+                            IPState.DRAINING,
+                            IPState.REPLACING,
+                        }
                         for other in self.nodes.values()
                     )
                     node.checked_at = time.time()
@@ -1262,7 +1314,7 @@ class Gateway:
         node = self.nodes.get(binding.node_id)
         generations = []
         for n in self.nodes.values():
-            if n.binding_id == binding.id and n.state in {IPState.IN_USE, IPState.DRAINING}:
+            if n.binding_id == binding.id and n.state in {IPState.RESERVED, IPState.IN_USE, IPState.DRAINING}:
                 generations.append(
                     {
                         "node_id": n.id,
@@ -1275,7 +1327,7 @@ class Gateway:
                 )
         return {
             **asdict(binding),
-            "ip": node.ip if node and node.state == IPState.IN_USE else None,
+            "ip": node.ip if node and node.state in {IPState.RESERVED, IPState.IN_USE} else None,
             "account_id": node.account_id if node else None,
             "connections": sum(t["binding_id"] == binding.id for t in self.tunnels.values()),
             "rotation_status": self.rotation.binding_status(binding),
@@ -1285,7 +1337,9 @@ class Gateway:
                 "UNAVAILABLE"
                 if binding.unavailable
                 else (
-                    "ACTIVE"
+                    "RESERVED"
+                    if node and node.state == IPState.RESERVED
+                    else "ACTIVE"
                     if node and node.state == IPState.IN_USE and self._count_node(node.id)
                     else "RETAINED"
                     if node and node.state == IPState.IN_USE
@@ -1323,6 +1377,7 @@ class Gateway:
             "total_ips": len(nodes),
             "fresh_count": sum(self._fresh_eligible(n) for n in nodes),
             "in_use_count": counts[IPState.IN_USE],
+            "reserved_count": counts[IPState.RESERVED],
             "draining_count": counts[IPState.DRAINING],
             "quarantined_count": counts[IPState.QUARANTINED],
             "replacing_count": counts[IPState.REPLACING],
@@ -1331,7 +1386,8 @@ class Gateway:
             "binding_limit": self.active_limit(),
             "active_connections": len(tunnels),
             "retained_bindings": sum(
-                not b.released and not any(t["binding_id"] == b.id for t in tunnels) for b in bindings
+                not b.released and not b.reserved and not any(t["binding_id"] == b.id for t in tunnels)
+                for b in bindings
             ),
             "waiters": self.waiters,
             "countries": countries,
@@ -1445,10 +1501,14 @@ class Gateway:
             for j in self.replacements.values()
         ):
             return "账号仍有替换或待核对任务，请先处理"
-        if ids & (self.probing | self.quality.busy) or self.ipquality.running in ids:
+        if (
+            ids & (self.probing | self.quality.busy)
+            or self.ipquality.running in ids
+            or self.ping0.running in ids
+        ):
             return "账号资源仍在检测，请稍后重试"
         if any(
-            n.id in ids and n.state in {IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
+            n.id in ids and n.state in {IPState.RESERVED, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}
             for n in self.nodes.values()
         ):
             return "账号资源仍在使用、排空或替换中"

@@ -251,6 +251,8 @@ class QualityManager:
                     "round_submitted": sum(x["round_id"] == group["round_id"] for x in used),
                     "running": group["id"] in self.running,
                     "rotation": self.g.rotation.public(group["id"]),
+                    "workers": self.g.workers.public(group["id"]),
+                    "reserved": sum(n.state == IPState.RESERVED for n in nodes),
                 }
             )
         return rows
@@ -311,6 +313,8 @@ class QualityManager:
                 values = {**values, "policy": policy}
             group.update(values)
             self.groups[id] = group
+            if create:
+                self.g.workers.rules[id] = {"managed": True, "high_water": len(nodes)}
             for node in nodes:
                 self._move(node, id)
             for node in self.g.nodes.values():

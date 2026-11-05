@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 
+from .connection import build_connection
 from .models import GatewayError, IPState, uid
 from .quality import QualityPolicy
 from .quotas import aggregate_usage
@@ -16,6 +17,20 @@ from .rotation import ManualCommit, ManualPreview, RotationPolicy
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class LinkIssue(Model):
+    group_id: str = Field(default="default", pattern=r"^[A-Za-z0-9]{1,32}$")
+    node_id: str | None = Field(default=None, max_length=64)
+
+
+class WorkerRule(Model):
+    managed: bool
+
+
+class ReportMethods(Model):
+    ipquality: bool | None = None
+    ping0: bool | None = None
 
 
 class GroupCreate(Model):
@@ -73,6 +88,61 @@ def register(app, gateway, auth, operate):
     g = gateway
     deps = [Depends(auth)]
     prefix = "/api/v1"
+
+    @app.post(prefix + "/proxy-links", dependencies=deps)
+    async def issue_link(body: LinkIssue, request: Request):
+        key = request.headers.get("idempotency-key", "")
+        if len(key) > 128:
+            raise GatewayError("INVALID_KEY", "幂等键过长", 422)
+        route, reserved = await g.workers.issue(body.group_id, body.node_id, key)
+        result = build_connection(
+            g.config,
+            g.config.public_proxy_host or request.url.hostname or "127.0.0.1",
+            route.worker,
+            route.session,
+            route.country,
+            route.group,
+        )
+        return {**result, "reserved": reserved, "worker_id": route.worker, "session_id": route.session}
+
+    @app.post(prefix + "/bindings/{binding_id}/cancel-reservation", dependencies=deps)
+    async def cancel_reservation(binding_id: str, request: Request):
+        return await operate(
+            request, "cancel_reservation", {}, lambda: g.release(binding_id, reservation_only=True)
+        )
+
+    @app.patch(prefix + "/groups/{group_id}/workers", dependencies=deps)
+    async def worker_rule(group_id: str, body: WorkerRule):
+        return await g.workers.save(group_id, body.managed)
+
+    @app.get(prefix + "/quality/report-methods", dependencies=deps)
+    async def report_methods():
+        return g.report_methods
+
+    @app.patch(prefix + "/quality/report-methods", dependencies=deps)
+    async def save_methods(body: ReportMethods):
+        async with g.changed:
+            g._writable()
+            g.report_methods.update(body.model_dump(exclude_none=True))
+            await g._persist()
+        return g.report_methods
+
+    @app.get(prefix + "/nodes/{node_id}/ping0", dependencies=deps)
+    async def ping0_report(node_id: str):
+        node = g.nodes.get(node_id)
+        if not node:
+            raise GatewayError("NOT_FOUND", "资源不存在", 404)
+        return {
+            "report": await g.ping0.latest(node),
+            "running": g.ping0.running == node_id,
+            "busy": g.ping0.running is not None,
+            "node_ip": node.ip,
+            "enabled": g.report_methods["ping0"],
+        }
+
+    @app.post(prefix + "/nodes/{node_id}/ping0", dependencies=deps)
+    async def run_ping0(node_id: str, request: Request):
+        return await operate(request, "ping0_report", {}, lambda: g.ping0.run(node_id))
 
     options_cache = {}
 
@@ -300,6 +370,7 @@ def register(app, gateway, auth, operate):
             raise GatewayError("NOT_FOUND", "资源不存在", 404)
         return {
             "report": await g.ipquality.latest(node),
+            "enabled": g.report_methods["ipquality"],
             "running": g.ipquality.running == node_id,
             "busy": g.ipquality.running is not None,
             "node_ip": node.ip,
@@ -330,7 +401,7 @@ def register(app, gateway, auth, operate):
         healthy = [
             n
             for n in nodes
-            if n.state in {IPState.FRESH, IPState.IN_USE}
+            if n.state in {IPState.FRESH, IPState.RESERVED, IPState.IN_USE}
             and (n.last_success_at or n.checked_at or 0) >= now - 1800
         ]
         groups = g.quality.public_groups()

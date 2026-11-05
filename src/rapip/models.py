@@ -19,6 +19,7 @@ class GatewayError(Exception):
 
 class IPState(StrEnum):
     FRESH = "FRESH"
+    RESERVED = "RESERVED"
     IN_USE = "IN_USE"
     DRAINING = "DRAINING"
     QUARANTINED = "QUARANTINED"
@@ -117,6 +118,7 @@ class Binding:
     rotation: dict = field(default_factory=dict)
     group_id: str = "default"
     policy_version: int = 0
+    reserved: bool = False
 
 
 @dataclass

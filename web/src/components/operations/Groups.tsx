@@ -1,3 +1,4 @@
+import { ReportMethods } from "./ReportMethods";
 import { LoadingState, TableLoading } from "../ui/loading";
 import { RotationDialog } from "./RotationDialog";
 import { useState, type FormEvent } from "react";
@@ -499,7 +500,9 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                   </td>
                   <td>
                     <b className="accent">{g.fresh}</b> / {g.total}
-                    <small>在用 {g.in_use}</small>
+                    <small>
+                      在用 {g.in_use} · 预留 {g.reserved ?? 0}
+                    </small>
                   </td>
                   <td>
                     <div className="ops-state-counts">
@@ -1238,6 +1241,7 @@ export function QualitySources({ notify }: { notify: (v: string) => void }) {
           {query.data?.global_daily_limit ?? "—"}
         </span>
       </div>
+      <ReportMethods />
       <div className="quality-free-source">
         <ShieldCheck size={22} />
         <div>
