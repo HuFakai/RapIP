@@ -10,6 +10,7 @@
 
 ## 已完成
 
+- 域名 HTTPS 反向代理、合法源站证书和安全登录 Cookie 已验证；证书自动续期定时器启用且模拟续期通过。管理监听继续仅本机发布。代理端口改为公网发布，外部 SOCKS5 协商和 HTTP 407 认证响应均通过；连接弹窗由 PUBLIC_PROXY_HOST 显式下发服务器 IP，不再使用 localhost。此次没有新建业务绑定或额外消耗 Replace 额度。
 - `uv run pytest -q`：71 项通过，覆盖身份解析、并发独占、粘性、迟到 session、缺货失败、两种切换、故障转移、冷却、重启恢复、单进程所有权、存储故障、鉴权/CSRF/幂等及 SOCKS5、HTTP、CONNECT 转发。
 - 整体测活失败不批量烧号；单节点重复失败且同伴可用时进入替换队列；结果不明任务阻止同账号后续替换。
 - `uv run ruff check src tests scripts`：通过，源码已格式化。

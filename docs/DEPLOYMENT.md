@@ -113,6 +113,23 @@ docker compose up -d --build --wait --wait-timeout 180
 
 远程直接使用代理时，将 `RAPIP_PROXY_BIND_IP=0.0.0.0`，设置客户端可达的 `RAPIP_PUBLIC_PROXY_HOST`，并按实际选定端口配置服务器安全组/防火墙的允许来源。管理入口可继续只绑定本机，或经 HTTPS 反向代理提供。
 
+### 管理域名与代理地址分开配置
+
+HTTPS 管理域名反向代理到服务器本机的管理端口；SOCKS5/HTTP 客户端直接使用服务器 IP 和各自的代理端口。域名经过 Cloudflare 时，不要把它直接填写为原始代理入口，参见 [Cloudflare 支持的端口](https://developers.cloudflare.com/fundamentals/reference/network-ports/)。
+
+```dotenv
+RAPIP_ADMIN_BIND_IP=127.0.0.1
+RAPIP_COOKIE_SECURE=true
+RAPIP_PROXY_BIND_IP=0.0.0.0
+RAPIP_PUBLIC_PROXY_HOST=YOUR_SERVER_IP
+```
+
+`RAPIP_PUBLIC_PROXY_HOST` 是显式配置的客户端可达地址，不自动从容器网卡或管理页主机名推测。修改后重建容器，连接弹窗和 AI 接入说明都会使用该值；公网 NAT 端口不同再填写 PUBLIC_*_PORT。
+
+反向代理须保留原始 Host，转发 X-Forwarded-Proto=https；`/api/` 不缓存。证书配置在反向代理层，并配置自动续期及成功续期后的安全 reload。这里开启了安全 Cookie，应通过 HTTPS 域名登录；原 HTTP 隧道地址不作为普通登录入口。
+
+现有部署已完成上述配置：HTTPS 管理页可登录，两个公网代理端口能从外部到达且要求认证。该检查只做认证握手和连接配置生成，不创建业务绑定，也不额外提交 Replace；统计计数仍保留此前唯一一次授权实测。
+
 ## 5. 远程访问、添加账号与连接
 
 脚本会按实际端口展示 SSH 转发命令。以下仅为手工默认端口示例，在客户端电脑运行：
