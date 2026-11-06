@@ -367,7 +367,7 @@ class Gateway:
                             node.state, node.used, binding.reserved = IPState.IN_USE, True, False
                             self.workers.consume(route)
                             node.reason = "预留链接已启用，会话独占"
-                            self.lifecycle.add("assigned", node=node, binding=binding)
+                            self.lifecycle.add("assigned", node=node, binding=binding, reason=node.reason)
                             await self._persist()
                         if node and node.state == IPState.IN_USE:
                             binding.last_active = time.time()
@@ -656,7 +656,17 @@ class Gateway:
         return {"binding_id": binding.id, "released": True}
 
     def _release(self, binding: Binding, mode: str, reason="管理员主动释放"):
-        self.lifecycle.add("released", binding=binding, node=self.nodes.get(binding.node_id), reason=reason)
+        node = self.nodes.get(binding.node_id)
+        release_action = (
+            "unused_reservation"
+            if node and node.state == IPState.RESERVED and not node.used
+            else "used_exit"
+            if node and node.state == IPState.IN_USE
+            else "other"
+        )
+        self.lifecycle.add(
+            "released", binding=binding, node=node, reason=reason, release_action=release_action
+        )
         binding.released = True
         binding.released_at, binding.release_reason = time.time(), reason
         self.retired_details[f"{binding.slot}:{binding.session}"] = {

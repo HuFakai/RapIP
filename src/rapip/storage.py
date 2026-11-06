@@ -79,7 +79,7 @@ class Storage:
             clauses.append("(json_extract(payload,'$.binding_id') IS NOT NULL OR kind='issued')")
         else:
             clauses.append("json_extract(payload,'$.ip') IS NOT NULL")
-        for key in ("group_id", "binding_id", "slot_id", "job_id"):
+        for key in ("group_id", "binding_id", "slot_id", "job_id", "worker"):
             if filters.get(key) and key == "slot_id":
                 clauses.append(
                     "(json_extract(payload,'$.slot_id') = ? OR json_extract(payload,'$.old_slot_id') = ?)"
@@ -88,7 +88,16 @@ class Storage:
             elif filters.get(key):
                 clauses.append(f"json_extract(payload,'$.{key}') = ?")
                 values.append(filters[key])
-        if filters.get("q"):
+        if filters.get("ip"):
+            clauses.append(
+                "(json_extract(payload,'$.ip') = ? OR json_extract(payload,'$.old_ip') = ? "
+                "OR json_extract(payload,'$.new_ip') = ? "
+                "OR json_extract(payload,'$.slot_id') IN (SELECT value FROM json_each(?)) "
+                "OR json_extract(payload,'$.old_slot_id') IN (SELECT value FROM json_each(?)))"
+            )
+            slots = json.dumps(filters.get("slots", []))
+            values.extend([filters["ip"]] * 3 + [slots, slots])
+        elif filters.get("q"):
             columns = (
                 "worker",
                 "session",
@@ -117,6 +126,45 @@ class Storage:
             ) as cur:
                 items = [json.loads(row[0]) for row in await cur.fetchall()]
         return items, total
+
+    async def ip_lineage(self, ip, group, explicit_slot, known_slots, cutoff):
+        # A business switch changes a link's exit; it does not replace one resource with another.
+        async with self.lock:
+            if not explicit_slot:
+                async with self.db.execute(
+                    """SELECT DISTINCT CASE WHEN json_extract(payload,'$.old_ip') = ?
+                        AND json_extract(payload,'$.old_slot_id') IS NOT NULL
+                        THEN json_extract(payload,'$.old_slot_id')
+                        ELSE json_extract(payload,'$.slot_id') END AS slot
+                    FROM lifecycle WHERE at >= ? AND (? = '' OR json_extract(payload,'$.group_id') = ?)
+                    AND (? IN (json_extract(payload,'$.ip'),json_extract(payload,'$.old_ip'))
+                         OR (kind='webshare' AND json_extract(payload,'$.new_ip') = ?))""",
+                    (ip, cutoff, group, group, ip, ip),
+                ) as cur:
+                    slots = sorted(set(known_slots) | {r[0] for r in await cur.fetchall() if r[0]})
+            else:
+                slots = [explicit_slot]
+            if not slots:
+                return [], []
+            async with self.db.execute(
+                """SELECT payload FROM lifecycle WHERE at >= ? AND kind='webshare'
+                   AND json_extract(payload,'$.slot_id') IN (SELECT value FROM json_each(?))
+                   AND json_extract(payload,'$.status')='COMPLETED'
+                   AND json_extract(payload,'$.new_ip') IS NOT NULL
+                   AND json_extract(payload,'$.ip') IS NOT NULL
+                   AND json_extract(payload,'$.ip') <> json_extract(payload,'$.new_ip')
+                   ORDER BY at DESC,id DESC""",
+                (cutoff, json.dumps(slots)),
+            ) as cur:
+                # A repeated observation of the same job does not make another transition.
+                seen, changes = set(), []
+                for (payload,) in await cur.fetchall():
+                    event = json.loads(payload)
+                    key = event.get("job_id") or event["id"]
+                    if key not in seen:
+                        seen.add(key)
+                        changes.append({k: event[k] for k in ("slot_id", "ip", "new_ip", "at", "group_id")})
+        return slots, changes
 
     async def chains(self, view, filters, offset, size, cutoff):
         # Match filters against individual events, then fetch the entire matched chain.

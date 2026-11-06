@@ -126,7 +126,7 @@ const navigation = [
     id: "lifecycle",
     label: "代理追踪",
     icon: Workflow,
-    caption: "从 session 切换追到出口补货",
+    caption: "查看 session、出口与供应商换号的前后变化",
   },
   {
     id: "tasks",
@@ -1734,7 +1734,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.10</span>
+            <span className="version-tag">v0.2.11</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">

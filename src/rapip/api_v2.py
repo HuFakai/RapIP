@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import time
 from typing import Literal
 
@@ -224,18 +225,55 @@ def register(app, gateway, auth, operate):
         slot_id: str = Query("", max_length=64),
         job_id: str = Query("", max_length=64),
         q: str = Query("", max_length=128),
+        worker: str = Query("", max_length=64),
         page: int = Query(1, ge=1, le=100000),
         page_size: int = Query(12, ge=1, le=50),
     ):
+        cutoff = time.time() - g.observer.retention.event_days * 86400
+        ip = ""
+        if view == "ips" and q.strip():
+            try:
+                ip = str(ipaddress.ip_address(q.strip()))
+            except ValueError:
+                pass
+        paths = []
+        slots = []
+        if ip or (view == "ips" and slot_id):
+            known = {
+                n.slot_id
+                for n in g.nodes.values()
+                if n.ip == ip and n.slot_id and (not group_id or n.group_id == group_id)
+            }
+            slots, changes = await g.storage.ip_lineage(ip, group_id, slot_id, known, cutoff)
+            by_slot = {}
+            for event in changes:
+                by_slot.setdefault(event["slot_id"], []).append(event)
+            for sid in slots:
+                node = g.nodes.get(g.quality.slots.get(sid, {}).get("node_id"))
+                current = None
+                if node and node.state != IPState.ARCHIVED:
+                    current = {"ip": node.ip, "state": node.state, "group_id": node.group_id}
+                paths.append({"slot_id": sid, "current": current, "changes": by_slot.get(sid, [])})
         rows, total = await g.storage.chains(
             view,
-            dict(group_id=group_id, binding_id=binding_id, slot_id=slot_id, job_id=job_id, q=q.strip()),
+            dict(
+                group_id=group_id,
+                binding_id=binding_id,
+                slot_id=slot_id,
+                job_id=job_id,
+                q=q.strip(),
+                worker=worker,
+                ip=ip,
+                slots=slots,
+            ),
             (page - 1) * page_size,
             page_size,
-            time.time() - g.observer.retention.event_days * 86400,
+            cutoff,
         )
         current = {
-            g.lifecycle.key(b.id, b.generation): ("CURRENT" if not b.unavailable else "UNAVAILABLE")
+            g.lifecycle.key(b.id, b.generation): (
+                "RESERVED" if b.reserved else "CURRENT" if not b.unavailable else "UNAVAILABLE"
+            )
             for b in g.bindings.values()
             if not b.released and b.id not in g.dynamic.pending
         }
@@ -244,7 +282,22 @@ def register(app, gateway, auth, operate):
             current[pending["chain_id"]] = (
                 "REVIEW" if status["status"] == "UNCERTAIN" or pending.get("error") else "RUNNING"
             )
+        focused_binding = g.bindings.get(binding_id) if binding_id else None
+        if not focused_binding and worker and group_id and view == "links":
+            focused_binding = max(
+                (b for b in g.bindings.values() if b.worker == worker and b.group_id == group_id),
+                key=lambda b: (not b.released, b.created_at),
+                default=None,
+            )
+        focus = None
+        if focused_binding:
+            data = g.public_binding(focused_binding)
+            focus = {
+                key: data[key] for key in ("worker", "group_id", "session", "ip", "generation", "status")
+            }
         return {
+            "paths": paths,
+            "focus": focus,
             "items": [
                 {"id": key, "status": current.get(key), "events": entries} for key, entries in rows.items()
             ],

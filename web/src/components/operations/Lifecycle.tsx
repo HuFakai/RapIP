@@ -6,8 +6,7 @@ import {
   type FormEvent,
 } from "react";
 import {
-  ArrowDown,
-  ArrowDownUp,
+  ArrowUp,
   ArrowLeft,
   ArrowRight,
   ChevronLeft,
@@ -20,7 +19,7 @@ import {
   Radio,
   Search,
 } from "lucide-react";
-import { useQuery, type Paged } from "@/lib/api";
+import { useQuery, type BindingData, type Paged } from "@/lib/api";
 import { queryString, type Group } from "@/lib/v2";
 import { date } from "@/lib/utils";
 import { Button } from "../ui/button";
@@ -29,22 +28,21 @@ import { LoadingState } from "../ui/loading";
 import { ErrorMessage, GroupLabel, Status } from "./Common";
 
 const labels: Record<string, string> = {
-  issued: "生成链接",
-  reserved: "预留出口",
-  assigned: "获配出口",
-  connected: "首次连通",
-  switched: "出口切换",
-  draining: "旧连接排空",
-  fault_retired: "故障退役",
-  released: "释放绑定",
-  admission: "资源准入",
-  moved: "迁移分组",
-  webshare: "Webshare",
-  baseline: "已有绑定",
-  in_place_started: "申请原位替换",
-  in_place_join: "合并新 session",
-  in_place_admission: "新 IP 质量准入",
-  in_place_failed: "原位替换受阻",
+  issued: "生成待用链接",
+  reserved: "为链接预留 IP",
+  assigned: "链接获配 IP",
+  connected: "链接首次连通",
+  switched: "链接切换出口",
+  draining: "等待旧连接结束",
+  fault_retired: "旧出口因故障退役",
+  released: "解除链接绑定",
+  admission: "IP 准入检查",
+  moved: "IP 转入分组",
+  baseline: "开始追踪时已绑定",
+  in_place_started: "申请替换原 IP",
+  in_place_join: "更新待接收 session",
+  in_place_admission: "检查新 IP",
+  in_place_failed: "原位替换未完成",
 };
 const statuses: Record<string, string> = {
   PASS: "准入通过",
@@ -118,6 +116,7 @@ interface Entry {
   preferred_selection?: Selection;
   fallback_reason?: string;
   attempt?: number;
+  release_action?: "unused_reservation" | "used_exit" | "other";
 }
 interface Chain {
   id: string;
@@ -127,10 +126,130 @@ interface Chain {
 function traceLink(params: Record<string, string>) {
   return "#lifecycle?" + queryString(params);
 }
+const supplierTitles: Record<string, string> = {
+  QUEUED: "旧 IP 排队更换",
+  SUBMITTING: "提交 Webshare",
+  PROCESSING: "Webshare 正在换 IP",
+  RECONCILING: "确认新旧 IP",
+  COMPLETED: "Webshare 已换号",
+  FAILED: "Webshare 更换失败",
+  UNCERTAIN: "更换结果待核对",
+  BUDGET_BLOCKED: "更换额度不足",
+  CANCELLED: "更换已取消",
+};
+const ipStates: Record<string, string> = {
+  FRESH: "待分配",
+  RESERVED: "已预留",
+  IN_USE: "已绑定",
+  DRAINING: "旧连接排空中",
+  REPLACING: "更换中",
+  QUARANTINED: "隔离中",
+};
 function title(e: Entry) {
-  return e.kind === "webshare"
-    ? (statuses[e.status ?? ""] ?? "Webshare 替换")
-    : (labels[e.kind] ?? e.kind);
+  if (e.kind === "webshare")
+    return e.status === "COMPLETED" && !e.new_ip
+      ? "新 IP 未能确认"
+      : (supplierTitles[e.status ?? ""] ?? "Webshare 更换");
+  if (e.kind === "released" && e.release_action === "unused_reservation")
+    return "取消未使用预留";
+  if (e.kind === "assigned" && e.reason === "预留链接已启用，会话独占")
+    return "预留链接已启用";
+  if (e.kind === "in_place_admission" && e.status === "PASS")
+    return "新 IP 通过准入";
+  if (e.kind === "admission" && e.status)
+    return e.status === "FRESH" || e.status === "IN_USE"
+      ? "IP 通过准入"
+      : e.status === "QUARANTINED"
+        ? "IP 隔离"
+        : "IP 准入检查";
+  if (e.kind === "baseline" && e.status === "RESERVED")
+    return "开始追踪时已预留";
+  return labels[e.kind] ?? e.kind;
+}
+function ipHref(ip: string, slot = "") {
+  return traceLink({ view: "ips", q: ip, slot_id: slot });
+}
+function IPValue({ ip, slot = "" }: { ip: string; slot?: string }) {
+  return (
+    <a className="trace-value" href={ipHref(ip, slot)} title={`追踪 IP ${ip}`}>
+      <code>{ip}</code>
+    </a>
+  );
+}
+interface IPPath {
+  slot_id: string;
+  current: { ip: string; state: string; group_id: string } | null;
+  changes: { ip: string; new_ip: string; at: number; group_id: string }[];
+}
+function IPPaths({
+  paths,
+  focusedIP,
+  slot,
+}: {
+  paths: IPPath[];
+  focusedIP: string;
+  slot: string;
+}) {
+  return (
+    <aside className="surface trace-focus">
+      <header>
+        <Layers3 size={15} />
+        <strong>
+          {focusedIP ? (
+            <>
+              正在追踪 <code>{focusedIP}</code>
+            </>
+          ) : (
+            "正在追踪同一资源席位"
+          )}
+        </strong>
+        {paths.length > 1 && <span>{paths.length} 个不同席位</span>}
+      </header>
+      {paths.map((path) => (
+        <div key={path.slot_id} className="trace-focus-row">
+          <div className="trace-focus-current">
+            <span>
+              席位 <code>{path.slot_id.slice(0, 8)}</code>
+            </span>
+            {path.current ? (
+              <>
+                <b>当前 IP</b>
+                <IPValue ip={path.current.ip} slot={path.slot_id} />
+                <span>
+                  {ipStates[path.current.state] ?? path.current.state}
+                </span>
+                <GroupLabel id={path.current.group_id} showId={false} />
+              </>
+            ) : (
+              <span>此席位暂无当前 IP</span>
+            )}
+          </div>
+          {path.changes.length ? (
+            <ol className="trace-ip-history" aria-label="Webshare 更换历史">
+              {path.changes.map((change) => (
+                <li key={`${change.at}:${change.ip}:${change.new_ip}`}>
+                  <time>{date(change.at)}</time>
+                  <IPValue ip={change.ip} slot={path.slot_id} />
+                  <ArrowRight size={13} aria-label="更换为" />
+                  <IPValue ip={change.new_ip} slot={path.slot_id} />
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>没有查到已确认的 Webshare 更换记录。</p>
+          )}
+        </div>
+      ))}
+      {!paths.length && (
+        <p>没有查到这个 IP 的资源席位，仍可查看下方直接匹配的记录。</p>
+      )}
+      {!!slot && focusedIP && (
+        <a className="trace-text-link" href={ipHref(focusedIP)}>
+          查看该 IP 的所有席位
+        </a>
+      )}
+    </aside>
+  );
 }
 function duration(seconds: number) {
   if (seconds < 1) return `${Math.max(0, Math.round(seconds * 1000))} ms`;
@@ -225,8 +344,8 @@ function Lane({
           <div className="trace-stepper">
             <button
               type="button"
-              title="向前查看"
-              aria-label={`${name}向前查看`}
+              title="查看更新的节点"
+              aria-label={`${name}查看更新的节点`}
               disabled={expanded ? position === 0 : edges.start}
               onClick={() => navigate(-1)}
             >
@@ -234,8 +353,8 @@ function Lane({
             </button>
             <button
               type="button"
-              title="向后查看"
-              aria-label={`${name}向后查看`}
+              title="查看更早的节点"
+              aria-label={`${name}查看更早的节点`}
               disabled={expanded ? position >= items.length - 1 : edges.end}
               onClick={() => navigate(1)}
             >
@@ -269,9 +388,17 @@ function Lane({
                 <div className="trace-segment" key={e.id}>
                   {i > 0 &&
                     (expanded && rowIndex % 2 ? (
-                      <ArrowLeft className="trace-arrow" size={14} />
+                      <ArrowRight
+                        className="trace-arrow"
+                        size={14}
+                        aria-hidden="true"
+                      />
                     ) : (
-                      <ArrowRight className="trace-arrow" size={14} />
+                      <ArrowLeft
+                        className="trace-arrow"
+                        size={14}
+                        aria-hidden="true"
+                      />
                     ))}
                   <button
                     ref={(element) => {
@@ -293,7 +420,11 @@ function Lane({
                   {expanded &&
                     i === row.length - 1 &&
                     rowIndex < rows.length - 1 && (
-                      <ArrowDown className="trace-turn" size={14} />
+                      <ArrowUp
+                        className="trace-turn"
+                        size={14}
+                        aria-hidden="true"
+                      />
                     )}
                 </div>
               );
@@ -328,23 +459,58 @@ function TraceCard({
     business[0] ??
     latest;
   const supplierLatest = supplier.find((e) => e.kind === "webshare");
+  const switched = business.find((e) => e.kind === "switched");
+  const released = business.find((e) => e.kind === "released");
+  const reserved = business.find(
+    (e) => e.kind === "reserved" || e.status === "RESERVED",
+  );
+  const connected = business.find(
+    (e) => e.kind === "connected" || e.kind === "assigned",
+  );
+  const supplierChange = supplier.find(
+    (e) =>
+      e.kind === "webshare" &&
+      e.status === "COMPLETED" &&
+      e.new_ip &&
+      e.ip &&
+      e.ip !== e.new_ip,
+  );
   const supplierActive =
     !!supplierLatest && runningSupplier.has(supplierLatest.status ?? "");
   const businessActive = chain.status === "RUNNING";
   const state =
-    chain.status === "CURRENT"
-      ? "当前链路"
-      : chain.status === "UNAVAILABLE"
-        ? "当前链路 · 出口不可用"
-        : chain.status === "RUNNING"
-          ? "当前链路 · 切换中"
-          : chain.status === "REVIEW"
-            ? "当前链路 · 待处理"
-            : latest.kind === "issued"
-              ? "待首次连接"
-              : events.some((e) => e.kind === "in_place_failed")
-                ? "未完成"
-                : "历史";
+    chain.status === "RESERVED"
+      ? "已预留 · 待连接"
+      : chain.status === "CURRENT"
+        ? "当前绑定"
+        : chain.status === "UNAVAILABLE"
+          ? "当前出口不可用"
+          : chain.status === "RUNNING"
+            ? "切换中"
+            : chain.status === "REVIEW"
+              ? "切换待处理"
+              : released
+                ? "绑定已解除"
+                : latest.kind === "issued"
+                  ? "待首次连接"
+                  : events.some((e) => e.kind === "in_place_failed")
+                    ? "切换未完成"
+                    : "历史";
+  const businessNote =
+    released?.release_action === "unused_reservation"
+      ? "预留未使用，已解除，没有更换这个 IP"
+      : released && reserved && !connected && !switched
+        ? "预留已解除；这段记录没有显示链接连通过"
+        : businessActive && !switched
+          ? "仍在等待 Webshare 或新 IP 准入"
+          : !switched && connected
+            ? connected.kind === "connected"
+              ? "链接已连通；这一代沿用此出口"
+              : "链接已获配出口；这段记录未见首次连通"
+            : !switched && reserved && !released
+              ? "IP 已预留给该链接，等待客户端首次连接"
+              : "";
+  const cardIP = switched?.ip || summary.ip || supplierLatest?.ip;
   return (
     <article className={`trace-card ${chain.status ? "trace-current" : ""}`}>
       <header className="trace-card-head">
@@ -372,15 +538,8 @@ function TraceCard({
           )}
         </div>
         <div className="trace-card-tools">
-          {summary.old_ip && summary.ip && summary.old_ip !== summary.ip && (
-            <span className="trace-ip-pair" title="旧出口 → 新出口">
-              <code>{summary.old_ip}</code>
-              <ArrowRight size={12} />
-              <code>{summary.ip}</code>
-            </span>
-          )}
           <time title={date(latest.at)}>{date(latest.at)}</time>
-          <span title="从首条事件到末条事件或当前时间">
+          <span title="记录跨度：首条事件到末条事件或当前时间">
             <Clock3 size={13} />
             {laneElapsed(events, businessActive || supplierActive, now)}
           </span>
@@ -397,23 +556,107 @@ function TraceCard({
           )}
         </div>
       </header>
-      <Lane
-        name="业务切换"
-        items={business}
-        expanded={expanded}
-        onPick={onPick}
-        running={businessActive}
-        now={now}
-      />
-      <Lane
-        name="IP / 补货"
-        items={supplier}
-        supplier
-        expanded={expanded}
-        onPick={onPick}
-        running={supplierActive}
-        now={now}
-      />
+      <div className="trace-outcome">
+        {business.length > 0 && (
+          <div className="trace-outcome-row">
+            <span className="trace-outcome-label">
+              <GitBranch size={13} />
+              链接
+            </span>
+            {switched?.old_session &&
+              switched.old_session !== switched.session && (
+                <>
+                  <code title="旧 session">{switched.old_session}</code>
+                  <ArrowRight size={12} />
+                  <code title="新 session">{switched.session}</code>
+                  <span className="trace-outcome-divider" />
+                </>
+              )}
+            {switched?.old_ip && switched.old_ip !== cardIP && (
+              <>
+                <IPValue ip={switched.old_ip} slot={switched.old_slot_id} />
+                <ArrowRight size={13} />
+              </>
+            )}
+            {cardIP && (
+              <IPValue
+                ip={cardIP}
+                slot={switched?.slot_id ?? summary.slot_id}
+              />
+            )}
+            {switched?.source && (
+              <span>{sources[switched.source] ?? switched.source}</span>
+            )}
+            {businessNote && <span>{businessNote}</span>}
+            {summary.binding_id && (
+              <a
+                className="trace-text-link"
+                href={traceLink({
+                  view: "links",
+                  ...(summary.worker
+                    ? { worker: summary.worker, group_id: summary.group_id }
+                    : { binding_id: summary.binding_id }),
+                })}
+              >
+                看工位历次变化
+              </a>
+            )}
+          </div>
+        )}
+        {supplier.length > 0 && (
+          <div className="trace-outcome-row trace-outcome-supplier">
+            <span className="trace-outcome-label">
+              <Layers3 size={13} />
+              资源
+            </span>
+            {supplierChange ? (
+              <>
+                <IPValue
+                  ip={supplierChange.ip!}
+                  slot={supplierChange.slot_id}
+                />
+                <ArrowRight size={13} />
+                <IPValue
+                  ip={supplierChange.new_ip!}
+                  slot={supplierChange.slot_id}
+                />
+                <span>Webshare 已更换</span>
+              </>
+            ) : (
+              <>
+                {(supplierLatest?.ip || supplier[0].ip) && (
+                  <IPValue
+                    ip={(supplierLatest?.ip || supplier[0].ip)!}
+                    slot={supplierLatest?.slot_id ?? supplier[0].slot_id}
+                  />
+                )}
+                <span>{title(supplierLatest ?? supplier[0])}</span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      {business.length > 0 && (
+        <Lane
+          name="链接事件"
+          items={business}
+          expanded={expanded}
+          onPick={onPick}
+          running={businessActive}
+          now={now}
+        />
+      )}
+      {supplier.length > 0 && (
+        <Lane
+          name="资源事件"
+          items={supplier}
+          supplier
+          expanded={expanded}
+          onPick={onPick}
+          running={supplierActive}
+          now={now}
+        />
+      )}
     </article>
   );
 }
@@ -432,12 +675,28 @@ export function Lifecycle() {
   const [now, setNow] = useState(() => Date.now() / 1000);
   const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
   const size = 12;
-  const query = useQuery<Paged<Chain>>(
+  const worker = initial.get("worker") ?? "";
+  const focusedIP =
+    view === "ips" &&
+    (/^\d{1,3}(\.\d{1,3}){3}$/.test(q) ||
+      (q.includes(":") && /^[0-9a-f:]+$/i.test(q)))
+      ? q
+      : "";
+  const query = useQuery<
+    Paged<Chain> & {
+      paths?: IPPath[];
+      focus?: Pick<
+        BindingData,
+        "worker" | "group_id" | "session" | "ip" | "generation" | "status"
+      > | null;
+    }
+  >(
     "/lifecycle/chains?" +
       queryString({
         view,
         group_id: group,
         binding_id: binding,
+        worker,
         slot_id: slot,
         job_id: job,
         q,
@@ -453,9 +712,18 @@ export function Lifecycle() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, []);
+  const focus = query.data?.focus;
   function search(event: FormEvent) {
     event.preventDefault();
-    location.hash = traceLink({ view, group_id: group, q: draft.trim() });
+    const value = draft.trim();
+    const ip =
+      /^\d{1,3}(\.\d{1,3}){3}$/.test(value) ||
+      (value.includes(":") && /^[0-9a-f:]+$/i.test(value));
+    location.hash = traceLink({
+      view: ip ? "ips" : view,
+      group_id: group,
+      q: value,
+    });
   }
   return (
     <section className="trace-page">
@@ -471,7 +739,7 @@ export function Lifecycle() {
               aria-current={view === "links" ? "page" : undefined}
             >
               <GitBranch size={14} />
-              链接轨迹
+              链接变化
             </a>
           </Button>
           <Button
@@ -484,7 +752,7 @@ export function Lifecycle() {
               aria-current={view === "ips" ? "page" : undefined}
             >
               <Layers3 size={14} />
-              IP 与补货
+              IP 变化
             </a>
           </Button>
         </nav>
@@ -524,10 +792,10 @@ export function Lifecycle() {
       </div>
       <div className="trace-index">
         <span>
-          <ArrowDownUp size={13} />
-          最新在前 · 每条链路也从最新节点开始
+          <ArrowLeft size={13} />
+          最新记录在左 · 箭头从旧事件指向新事件
         </span>
-        {(binding || slot || job || q) && (
+        {(binding || worker || slot || job || q) && (
           <a href={traceLink({ view, group_id: group })}>清除筛选</a>
         )}
         {page > 1 && (
@@ -536,6 +804,42 @@ export function Lifecycle() {
           </Button>
         )}
       </div>
+      {view === "ips" && (focusedIP || slot) && query.data && (
+        <IPPaths
+          paths={query.data.paths ?? []}
+          focusedIP={focusedIP}
+          slot={slot}
+        />
+      )}
+      {view === "links" && focus && (
+        <aside className="surface trace-focus">
+          <header>
+            <GitBranch size={15} />
+            <strong>
+              {focus.worker ? `工位 ${focus.worker}` : "匿名会话"} ·
+              历次链接变化
+            </strong>
+            <GroupLabel id={focus.group_id} showId={false} />
+          </header>
+          <div className="trace-focus-current">
+            <b>
+              {focus.status === "RELEASED"
+                ? "绑定已解除"
+                : focus.status === "RESERVED"
+                  ? "当前预留"
+                  : "当前绑定"}
+            </b>
+            <code>{focus.session}</code>
+            {focus.ip && (
+              <>
+                <span>出口</span>
+                <IPValue ip={focus.ip} />
+              </>
+            )}
+            <span>第 {focus.generation} 代</span>
+          </div>
+        </aside>
+      )}
       <ErrorMessage message={query.error} />
       {query.isLoading && <LoadingState label="正在读取轨迹…" />}
       {query.data?.items.length === 0 && (
@@ -690,15 +994,19 @@ export function Lifecycle() {
                 })}
                 onClick={() => setPicked(null)}
               >
-                工位链路
+                查看此绑定的各代出口
               </a>
             )}
             {picked.slot_id && (
               <a
-                href={traceLink({ view: "ips", slot_id: picked.slot_id })}
+                href={
+                  picked.ip
+                    ? ipHref(picked.ip, picked.slot_id)
+                    : traceLink({ view: "ips", slot_id: picked.slot_id })
+                }
                 onClick={() => setPicked(null)}
               >
-                资源席位
+                追踪此 IP 的前后变化
               </a>
             )}
             {picked.old_slot_id && picked.old_slot_id !== picked.slot_id && (

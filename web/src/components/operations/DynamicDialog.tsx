@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { ArrowRightLeft, Layers3, Replace } from "lucide-react";
+import { ArrowRightLeft, Info, Layers3, Replace } from "lucide-react";
 import { refreshAll } from "@/lib/api";
 import { operation, type Group, type DynamicPolicy } from "@/lib/v2";
 import { Button } from "../ui/button";
@@ -70,72 +70,89 @@ export function DynamicDialog({
       title={`${group.name} · IP 动态切换`}
       description="仅影响已使用工位换 session；首次分配、同 session 重连和定时轮换各按原规则执行。"
     >
-      <form className="form-stack" onSubmit={save}>
-        <fieldset className="dynamic-modes">
-          <legend className="sr-only">切换策略</legend>
-          {modes.map(({ id, title, detail, icon: Icon }) => (
-            <label key={id} className="dynamic-choice">
-              <input
-                type="radio"
-                name="dynamic-mode"
-                checked={policy.mode === id}
-                onChange={() => setPolicy({ ...policy, mode: id })}
-              />
-              <Icon size={17} />
-              <span>
-                <strong>{title}</strong>
-                <small>{detail}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        {policy.mode !== "pool" && (
-          <>
-            <div className="dynamic-fields">
-              <label>
-                单次连接最多等待（秒）
+      <form className="form-stack policy-form dynamic-form" onSubmit={save}>
+        <div className="policy-scroll">
+          <fieldset className="dynamic-modes">
+            <legend className="sr-only">切换策略</legend>
+            {modes.map(({ id, title, detail, icon: Icon }) => (
+              <label key={id} className="dynamic-choice">
                 <input
-                  type="number"
-                  min={5}
-                  max={90}
-                  required
-                  value={policy.wait_seconds}
-                  onChange={(e) =>
-                    setPolicy({
-                      ...policy,
-                      wait_seconds: e.target.valueAsNumber || 0,
-                    })
-                  }
+                  type="radio"
+                  name="dynamic-mode"
+                  checked={policy.mode === id}
+                  onChange={() => setPolicy({ ...policy, mode: id })}
                 />
+                <span className="policy-mode-icon">
+                  <Icon size={17} />
+                </span>
+                <span>
+                  <strong>{title}</strong>
+                  <small>{detail}</small>
+                </span>
               </label>
-              <label>
-                成功后原位冷却（秒）
-                <input
-                  type="number"
-                  min={10}
-                  max={86400}
-                  required
-                  value={policy.cooldown_seconds}
-                  onChange={(e) =>
-                    setPolicy({
-                      ...policy,
-                      cooldown_seconds: e.target.valueAsNumber || 0,
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <p className="ops-warning">
-              原位替换会消耗 Webshare 额度，提交时旧 TCP
-              会断开。连接超时后使用同一个 session
-              重试；任务在后台继续。指定国家的连接不会随机换到其他国家。
-            </p>
-          </>
-        )}
-        <ErrorMessage message={error} />
-        <Button disabled={busy} type="submit">
-          {busy ? "正在保存…" : "保存切换规则"}
-        </Button>
+            ))}
+          </fieldset>
+          {policy.mode !== "pool" && (
+            <>
+              <div className="dynamic-fields">
+                <label>
+                  单次连接最多等待（秒）
+                  <input
+                    type="number"
+                    min={5}
+                    max={90}
+                    required
+                    value={policy.wait_seconds}
+                    onChange={(e) =>
+                      setPolicy({
+                        ...policy,
+                        wait_seconds: e.target.valueAsNumber || 0,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  成功后原位冷却（秒）
+                  <input
+                    type="number"
+                    min={10}
+                    max={86400}
+                    required
+                    value={policy.cooldown_seconds}
+                    onChange={(e) =>
+                      setPolicy({
+                        ...policy,
+                        cooldown_seconds: e.target.valueAsNumber || 0,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <p className="policy-hint ops-warning">
+                <Info size={15} />{" "}
+                <span>
+                  原位替换会消耗 Webshare 额度，提交时旧 TCP
+                  会断开。连接超时后使用同一个 session
+                  重试；任务在后台继续。指定国家的连接不会随机换到其他国家。
+                </span>
+              </p>
+            </>
+          )}
+          <ErrorMessage message={error} />
+        </div>
+        <div className="policy-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={close}
+          >
+            取消
+          </Button>
+          <Button disabled={busy} type="submit">
+            {busy ? "正在保存…" : "保存切换规则"}
+          </Button>
+        </div>
       </form>
     </Dialog>
   );

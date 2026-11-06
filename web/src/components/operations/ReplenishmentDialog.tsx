@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Check, RefreshCw, Search, X } from "lucide-react";
+import { Check, Info, RefreshCw, Search, Shuffle, X } from "lucide-react";
 import { mutate, refreshAll, useQuery } from "@/lib/api";
 import type { Group, ReplenishmentRule } from "@/lib/v2";
 import { Dialog } from "../ui/dialog";
@@ -202,90 +202,114 @@ export function ReplenishmentDialog({
   return (
     <Dialog
       open
-      wide
+      wide={!!kind}
       title={`${group.name} · Webshare 补货规则`}
       description="保存只设置后续补货目标，不发起更换。"
       onOpenChange={(open) => {
         if (!open && !busy) close();
       }}
     >
-      <form className="form-stack" onSubmit={save}>
-        <label>
-          补货方式
-          <select
-            value={mode}
-            disabled={busy}
-            onChange={(e) => {
-              setMode(e.target.value as ReplenishmentRule["mode"]);
-              setError("");
-            }}
-          >
-            <option value="any">随机可用 IP（默认）</option>
-            <option value="original">保持各 IP 原国家</option>
-            <option value="country">指定国家</option>
-            <option value="asn">指定 ASN</option>
-            <option value="ip_range">指定 IPv4 CIDR 号段</option>
-          </select>
-        </label>
-        {kind && (
-          <>
-            <div className="replenish-picker-head">
-              <span className="field-help">
-                {query.isFetching && !query.data
-                  ? "正在读取 Webshare 库存…"
-                  : query.data
-                    ? `本组 ${query.data.account_count} 个上游账号的共同可用选项；数量取各账号最小值。`
-                    : "读取本组 Webshare 库存"}
-              </span>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={query.isFetching || busy}
-                onClick={() => void query.refresh()}
-              >
-                <RefreshCw size={13} />
-                刷新
-              </Button>
-            </div>
-            <ErrorMessage message={query.error || query.data?.error} />
-            {query.data && (
-              <StockPicker
-                key={kind}
-                kind={kind}
-                stock={stock}
-                selected={selected}
-                busy={busy}
-                onChange={
-                  kind === "country"
-                    ? (items) => setCountry(items[0] ?? "")
-                    : kind === "asn"
-                      ? setAsns
-                      : setRanges
-                }
-              />
-            )}
-          </>
-        )}
-        {mode !== "any" && (
-          <label className="report-method-switch">
-            <span>指定库存不足时随机补货</span>
-            <input
-              type="checkbox"
-              checked={fallback}
+      <form className="form-stack policy-form replenish-form" onSubmit={save}>
+        <div className="policy-scroll">
+          <label className="policy-select">
+            <strong>补货方式</strong>
+            <select
+              value={mode}
               disabled={busy}
-              onChange={(e) => setFallback(e.target.checked)}
-            />
+              onChange={(e) => {
+                setMode(e.target.value as ReplenishmentRule["mode"]);
+                setError("");
+              }}
+            >
+              <option value="any">随机可用 IP（默认）</option>
+              <option value="original">保持各 IP 原国家</option>
+              <option value="country">指定国家</option>
+              <option value="asn">指定 ASN</option>
+              <option value="ip_range">指定 IPv4 CIDR 号段</option>
+            </select>
           </label>
-        )}
-        <p className="field-help">
-          库存会变化，执行前仍需供应商预检。明确缺货时才允许随机兜底；补回的 IP
-          仍须通过本组准入。
-        </p>
-        <ErrorMessage message={error} />
-        <Button type="submit" disabled={busy || !canSave}>
-          {busy ? "保存中…" : "保存规则"}
-        </Button>
+          {mode !== "any" && (
+            <label className="policy-fallback">
+              <Shuffle size={16} />
+              <span>
+                <strong>缺货时随机补货</strong>
+                <small>
+                  仅在 Webshare 确认缺货时兜底；补回的 IP 仍须通过本组准入。
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="指定库存不足时随机补货"
+                checked={fallback}
+                disabled={busy}
+                onChange={(e) => setFallback(e.target.checked)}
+              />
+            </label>
+          )}
+          {kind && (
+            <>
+              <div className="replenish-picker-head stock-caption">
+                <span className="field-help">
+                  {query.isFetching && !query.data
+                    ? "正在读取 Webshare 库存…"
+                    : query.data
+                      ? query.data.account_count === 1
+                        ? "当前账号可用库存 · 执行前还会重新校验"
+                        : `本组 ${query.data.account_count} 个上游账号的共同可用选项；数量取各账号最小值。`
+                      : "读取本组 Webshare 库存"}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={query.isFetching || busy}
+                  onClick={() => void query.refresh()}
+                >
+                  <RefreshCw size={13} />
+                  刷新
+                </Button>
+              </div>
+              <ErrorMessage message={query.error || query.data?.error} />
+              {query.data && (
+                <StockPicker
+                  key={kind}
+                  kind={kind}
+                  stock={stock}
+                  selected={selected}
+                  busy={busy}
+                  onChange={
+                    kind === "country"
+                      ? (items) => setCountry(items[0] ?? "")
+                      : kind === "asn"
+                        ? setAsns
+                        : setRanges
+                  }
+                />
+              )}
+            </>
+          )}
+          {mode === "any" && (
+            <p className="policy-hint">
+              <Info size={15} />从 Webshare 可用库存随机选择，补回的 IP
+              仍要通过分组准入。
+            </p>
+          )}
+          <ErrorMessage message={error} />
+        </div>
+        <div className="policy-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={close}
+          >
+            取消
+          </Button>
+          <Button type="submit" disabled={busy || !canSave}>
+            {busy ? "保存中…" : "保存规则"}
+          </Button>
+        </div>
       </form>
     </Dialog>
   );
