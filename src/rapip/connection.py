@@ -89,7 +89,8 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 - 同一 worker + session 的新连接共用出口。不同 worker 相互隔离；匿名 session 以 session 为绑定键。
 - 固定模式下，同组同工位同 session 的 IP 长期保留，所有 TCP 断开数小时也不会回收或禁用，不需要保活。服务重启保留绑定和原 IP，但客户端需重建 TCP。
 - 固定模式故障默认保留原 IP 并报错；只有管理员明确开启本组故障自动转移时，故障才允许同 session 换 IP。
-- 同一 worker 改变 session 后缀才主动申请新 IP，成功后旧 session 被替代；无合格库存则原绑定不变。不要让迟到请求切回旧 ID。
+- 同一 worker 改变 session 后缀会主动申请新 IP，成功后旧 session 被替代。默认仅从组内库存分配，无库存保留原绑定；管理员可选择缺库存时原位替换，或始终原位替换。不要让迟到请求切回旧 ID。
+- 原位替换会在真实提交时断开旧 TCP；网关等待对账及准入，不迁移已存在的 TCP。客户端超时、收到 HTTP 503 或 SOCKS5 建连失败时，应有界退避并重试同一个新 session；同工位正在进行的请求合并到一个任务，最新接受的 session 获得合格出口。结果不明或准入失败时查看工位和追踪，不要通过不断换 session 重试。
 - 匿名 session 是独立绑定；改匿名 session 会新增绑定，不自动清理旧绑定。默认使用稳定 worker。
 - 质量组可以明确开启有限额度的定时轮换，保持整个连接配置和 session 不变。达到无连接暂停时间后只停计划，不释放 IP；重连先用原 IP，再计一个完整周期，不补执行错过的轮换。预算耗尽不能靠重连恢复。
 - 管理页面支持“保留 session 换 IP”，客户端用户名可不变。
@@ -105,7 +106,7 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 - 管理页面 IP 质量报告内的“在 Ping0 查看”只会在浏览器打开对应 IP 的公开页面；不通过网关自动查询，不会影响绑定、准入或更换额度。IPQuality 可在质量检测源设置开关，关闭后保留历史。
 - 基础可用/稳定优先等级只检查网络；高质量等级需要配置对应检测源权限。UNKNOWN、PENDING、EXPIRED 不代表合格，缺 Key 或检测源限流不得判断为 IP 不合格。
 - 质量策略、自动更换开关与替换预算由管理员控制；网络超时不能触发客户端循环调用 rotate。自动更换只针对明确 FAIL，且受账号/全局/分组/本轮/席位预算约束。
-- 分组补货规则只控制退役后 Webshare 申请的随机、国家或号段；它不改变现有绑定，也不为当前连接等待供应商。替换完成后仍须准入，追踪请看 /api/v1/lifecycle。带 #别名 的 SOCKS5 链接给 v2rayN 导入，脚本继续用无片段的纯链接。
+- 分组补货规则控制 Webshare 替换的随机、国家、ASN 或网段。池内切换异步补货；原位切换会等待供应商和新 IP 准入，预算和冷却仍生效。替换完成后仍须准入，追踪请看 /api/v1/lifecycle。带 #别名 的 SOCKS5 链接给 v2rayN 导入，脚本继续用无片段的纯链接。
 - 用完一批任务再切换 session；复用相同 group + worker + session 便于维持出口。多浏览器共享 worker 时，切换前统一停止该工位的新请求，防止旧 session 回流。
 - 区分代理连接失败、代理认证失败与目标网站响应。HTTP CONNECT 建立成功不等于目标业务成功。SOCKS5/HTTPS 透传不解密目标 HTTP 状态码，也无法据此判断账号注册结果。
 
@@ -114,7 +115,7 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 POST /api/v1/rotate/<worker_id>?group_id={group}，请求头 Idempotency-Key: <UNIQUE_OPERATION_ID>。
 请求体 {{"session_policy":"keep","mode":"graceful"}}，可额外传 expected_generation 防止过期操作。
 返回 202 和 operation id；GET /api/v1/operations/<id> 查询结果。重试同一操作使用同一幂等键；结果未知时先查原操作，禁止换新幂等键重复提交。
-空闲断连不清理；仅业务明确结束时主动释放。显式轮换与释放可能消耗供应商更换额度，先确认业务已完成及授权范围；读取配置不分配 IP。无热备时保留原绑定并报错；最多有界重试，返回明确错误让调用者决定下一步。
+空闲断连不清理；仅业务明确结束时主动释放。显式轮换与释放可能消耗供应商更换额度，先确认业务已完成及授权范围；读取配置不分配 IP。管理 rotate 无热备时保留原绑定并报错；客户端新 session 切换遵守分组动态策略。最多有界重试，返回明确错误让调用者决定下一步。
 
 交付要求：
 1. 配置 RAPIP_PROXY_SERVER、RAPIP_PROXY_USERNAME、RAPIP_PROXY_PASSWORD；管理 Token 作为可选独立配置。

@@ -14,6 +14,8 @@ class Lifecycle:
         self.jobs = {}
         self.initialized = False
         self.cutoff = None
+        self.related = {}
+        self.keys = {}
 
     def add(self, kind, *, node=None, binding=None, route=None, **detail):
         item = {"id": uid(), "at": time.time(), "kind": kind}
@@ -35,7 +37,23 @@ class Lifecycle:
         if route:
             item.update(worker=route.worker, session=route.session, group_id=route.group)
         item.update(detail)
+        if node and kind in {"webshare", "admission", "draining"} and node.id in self.related:
+            item.setdefault("chain_id", self.related[node.id])
+        if binding and item.get("generation") and not item.get("chain_id"):
+            if key := self.keys.get(f"{binding.id}:{item['generation']}"):
+                item["chain_id"] = key
         self.pending.append(item)
+
+    def follow(self, old, binding):
+        self.related[old.id] = self.key(binding.id, binding.generation)
+
+    def inherit(self, old, fresh):
+        if chain := self.related.get(old.id):
+            self.related[fresh.id] = chain
+
+    def key(self, binding_id, generation):
+        generation_key = f"{binding_id}:{generation or 1}"
+        return self.keys.get(generation_key, f"binding:{generation_key}")
 
     def load(self, initialized):
         self.initialized = True
@@ -83,6 +101,7 @@ class Lifecycle:
 
     def job(self, job, baseline=False, status=None, reason=None):
         node = self.g.nodes.get(job.node_id)
+        pending = self.g.dynamic.active_for_job(job)
         self.add(
             "webshare",
             node=node,
@@ -98,6 +117,7 @@ class Lifecycle:
             preferred_selection=job.preferred_selection,
             fallback_reason=job.fallback_reason,
             attempt=job.attempts,
+            chain_id=(pending or {}).get("chain_id") or (self.related.get(node.id) if node else None),
             baseline=baseline,
         )
 

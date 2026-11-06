@@ -181,7 +181,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.9", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.10", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -661,7 +661,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "tunnel_idle_timeout": 0,
                 "session_expires": False,
                 "fault_failover": "由质量组决定，默认关闭",
-                "version": "0.2.9",
+                "version": "0.2.10",
             },
         }
 

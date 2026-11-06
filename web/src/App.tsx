@@ -16,6 +16,8 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  Copy,
+  GitBranch,
   Globe2,
   Layers3,
   LayoutDashboard,
@@ -52,6 +54,7 @@ import {
 } from "./lib/api";
 import { rotationStates } from "./components/operations/RotationDialog";
 import { quotaPair, trafficPair, packageBytes } from "./lib/quotas";
+import { copyText } from "./lib/browser";
 import { date, labels } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
@@ -319,10 +322,12 @@ function BindingsPage({
   onRotate,
   onRelease,
   onConnect,
+  notify,
 }: {
   onRotate: (item: BindingData) => void;
   onRelease: (item: BindingData) => void;
   onConnect: () => void;
+  notify: (message: string) => void;
 }) {
   const [group, setGroup] = useState(
     new URLSearchParams(location.hash.split("?")[1]).get("group_id") ?? "",
@@ -330,6 +335,7 @@ function BindingsPage({
   const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
   const [current, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [copying, setCopying] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const history = useQuery<Paged<EventData>>(
     `/events?binding_id=${expanded ?? "none"}&page_size=20`,
@@ -339,8 +345,29 @@ function BindingsPage({
   const query = useQuery<Paged<BindingData>>(
     `/bindings?page=${current}&page_size=20&q=${encodeURIComponent(search)}&group_id=${encodeURIComponent(group)}`,
   );
+  async function copyLink(
+    item: BindingData,
+    protocol: "socks5_named" | "http",
+  ) {
+    setCopying(item.id);
+    try {
+      const result = await api<{
+        links: Record<"socks5_named" | "http", string>;
+      }>(`/bindings/${item.id}/proxy-link`);
+      await copyText(result.links[protocol]);
+      notify(
+        protocol === "http"
+          ? "已复制当前 HTTP 链接"
+          : "已复制当前 SOCKS5 链接（含别名）",
+      );
+    } catch (error) {
+      notify((error as Error).message);
+    } finally {
+      setCopying("");
+    }
+  }
   return (
-    <section className="surface page-enter">
+    <section className="surface page-enter binding-compact">
       <div className="table-toolbar">
         <div className="search-input">
           <Search size={16} />
@@ -376,12 +403,21 @@ function BindingsPage({
       </div>
       <ErrorNote message={query.error} />
       {query.isLoading && <LoadingState label="正在加载会话绑定…" />}
+      {!!query.data?.items.length && (
+        <div className="binding-columns" aria-hidden="true">
+          <span>工位 / Session</span>
+          <span>出口 / 资源组</span>
+          <span>状态 / 连接</span>
+          <span>代理链接与操作</span>
+        </div>
+      )}
       <div className="binding-list">
         {query.data?.items.map((item) => (
           <div className="binding-item" key={item.id}>
             <div className="binding-main">
               <button
                 className="binding-title"
+                aria-expanded={expanded === item.id}
                 onClick={() =>
                   setExpanded(expanded === item.id ? null : item.id)
                 }
@@ -399,30 +435,77 @@ function BindingsPage({
               <div className="binding-ip">
                 <span className="mono strong">{item.ip || "等待可用出口"}</span>
                 <span className="small muted">
-                  <GroupLabel id={item.group_id} /> ·{" "}
+                  <GroupLabel id={item.group_id} showId={false} /> ·{" "}
                   {item.country || "任意国家"} · 第 {item.generation} 代
                 </span>
               </div>
               <div>
-                <Badge state={item.status} />
+                {item.dynamic_switch ? (
+                  <a
+                    className="binding-dynamic-link"
+                    href={`#lifecycle?view=links&binding_id=${item.id}`}
+                    title={item.dynamic_switch.error || "查看原位替换进度"}
+                  >
+                    {item.dynamic_switch.error ||
+                    item.dynamic_switch.status === "UNCERTAIN"
+                      ? "原位待处理"
+                      : "原位切换中"}
+                  </a>
+                ) : (
+                  <Badge state={item.status} />
+                )}
                 <div className="small muted binding-count">
-                  {item.connections} 条连接 ·{" "}
-                  {item.connections === 0 ? "IP 保留中" : "传输中"} ·{" "}
-                  {item.failovers} 次故障转移
+                  {item.connections} 条连接
+                  {item.failovers ? ` · ${item.failovers} 次故障转移` : ""}
                 </div>
               </div>
               <div className="row-actions">
                 <Button
                   variant="secondary"
                   size="sm"
-                  disabled={item.status === "RESERVED"}
+                  disabled={!item.ip || !!copying}
+                  onClick={() => void copyLink(item, "socks5_named")}
+                >
+                  <Copy size={13} />
+                  SOCKS5
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!item.ip || !!copying}
+                  onClick={() => void copyLink(item, "http")}
+                >
+                  <Copy size={13} />
+                  HTTP
+                </Button>
+                <Button asChild variant="secondary" size="sm">
+                  <a
+                    href={`#lifecycle?view=links&binding_id=${item.id}`}
+                    aria-label="查看工位轨迹"
+                    title="查看工位轨迹"
+                  >
+                    <GitBranch size={14} />
+                  </a>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={item.status === "RESERVED" || !!item.dynamic_switch}
                   onClick={() => onRotate(item)}
                 >
                   <RefreshCw size={14} />换 IP
                 </Button>
                 <Button
-                  variant="ghost"
-                  size="icon"
+                  variant="secondary"
+                  size="sm"
+                  disabled={
+                    !!item.dynamic_switch &&
+                    !(
+                      item.dynamic_switch.status === "ADMISSION" &&
+                      item.dynamic_switch.error
+                    )
+                  }
+                  title={item.status === "RESERVED" ? "取消预留" : "释放绑定"}
                   aria-label={`${item.status === "RESERVED" ? "取消预留工位" : "释放工位"} ${item.worker || item.session}`}
                   onClick={() => onRelease(item)}
                 >
@@ -432,6 +515,13 @@ function BindingsPage({
             </div>
             {expanded === item.id && (
               <div className="binding-detail">
+                {item.dynamic_switch && (
+                  <p className="rotation-permanent-note">
+                    候选 session{" "}
+                    <code>{item.dynamic_switch.requested_session}</code> ·{" "}
+                    {item.dynamic_switch.error || "等待任务完成"}
+                  </p>
+                )}
                 <p className="rotation-permanent-note">
                   {item.unavailable || "绑定长期保留；断连不会释放 IP"} ·{" "}
                   {rotationStates[item.rotation_status?.status ?? "OFF"] ??
@@ -1644,7 +1734,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.9</span>
+            <span className="version-tag">v0.2.10</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">
@@ -1779,12 +1869,11 @@ export default function App() {
                 onRotate={(item) => choose(item, "rotate")}
                 onRelease={(item) => choose(item, "release")}
                 onConnect={() => setConnectionOpen(true)}
+                notify={notify}
               />
             )}
             {pageId === "accounts" && <AccountsPage notify={notify} />}
-            {pageId === "lifecycle" && (
-              <Lifecycle key={routeKey} notify={notify} />
-            )}
+            {pageId === "lifecycle" && <Lifecycle key={routeKey} />}
             {pageId === "tasks" && <Tasks key={routeKey} />}
             {pageId === "settings" && <SettingsPage notify={notify} />}
             <footer className="workspace-footer">

@@ -251,6 +251,7 @@ class QualityManager:
                     "round_submitted": sum(x["round_id"] == group["round_id"] for x in used),
                     "running": group["id"] in self.running,
                     "rotation": self.g.rotation.public(group["id"]),
+                    "dynamic_switch": self.g.dynamic.policy(group["id"]),
                     "replenishment": self.g.replenishment.get(group["id"], {}),
                     "workers": self.g.workers.public(group["id"]),
                     "reserved": sum(n.state == IPState.RESERVED for n in nodes),
@@ -380,6 +381,7 @@ class QualityManager:
                 self._move(node, "default")
             del self.groups[id]
             self.g.replenishment.pop(id, None)
+            self.g.dynamic.policies.pop(id, None)
             await self.g._persist()
             self.g.changed.notify_all()
         await self.g._probe_candidates([n.id for n in nodes])
@@ -646,6 +648,7 @@ class QualityManager:
                     ):
                         continue
                     prior = node.state, self.state(node)
+                    dynamic_admission = node.binding_id in self.g.dynamic.pending
                     node.quality = verdict
                     net = evidence.get("network", {})
                     node.latency_ms = net.get("max_latency_ms")
@@ -658,6 +661,7 @@ class QualityManager:
                     else:
                         node.state = IPState.QUARANTINED
                         node.reason = "；".join(verdict["reasons"]) or "冷却或重复资源"
+                        self.g.dynamic.admission_error(node, node.reason)
                         if (
                             verdict["state"] == "FAIL"
                             and not node.binding_id
@@ -670,7 +674,7 @@ class QualityManager:
                                 node.reason += f"；{reason}"
                             else:
                                 self.g._retire(node, "质量拒绝：" + node.reason, cause="quality")
-                    if prior != (node.state, self.state(node)):
+                    if prior != (node.state, self.state(node)) and not dynamic_admission:
                         self.g.lifecycle.add("admission", node=node, status=node.state, reason=node.reason)
                 if not preview:
                     self.g.event(

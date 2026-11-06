@@ -72,7 +72,8 @@ class Storage:
     async def close(self) -> None:
         await self.db.close()
 
-    async def history(self, view, filters, offset, size, cutoff):
+    @staticmethod
+    def history_filter(view, filters, cutoff):
         clauses, values = ["at >= ?"], [cutoff]
         if view == "links":
             clauses.append("(json_extract(payload,'$.binding_id') IS NOT NULL OR kind='issued')")
@@ -103,7 +104,10 @@ class Storage:
                 "(" + " OR ".join(f"lower(json_extract(payload,'$.{key}')) = ?" for key in columns) + ")"
             )
             values.extend([filters["q"].lower().removeprefix("worker-")] * len(columns))
-        where = " AND ".join(clauses)
+        return " AND ".join(clauses), values
+
+    async def history(self, view, filters, offset, size, cutoff):
+        where, values = self.history_filter(view, filters, cutoff)
         async with self.lock:
             async with self.db.execute(f"SELECT count(*) FROM lifecycle WHERE {where}", values) as cur:
                 total = (await cur.fetchone())[0]
@@ -113,3 +117,57 @@ class Storage:
             ) as cur:
                 items = [json.loads(row[0]) for row in await cur.fetchall()]
         return items, total
+
+    async def chains(self, view, filters, offset, size, cutoff):
+        # Match filters against individual events, then fetch the entire matched chain.
+        where, values = self.history_filter(view, filters, cutoff)
+        cte = (
+            """WITH records AS MATERIALIZED (
+            SELECT id, at, kind, payload,
+                json_extract(payload,'$.binding_id') AS binding,
+                json_extract(payload,'$.slot_id') AS slot,
+                json_extract(payload,'$.ip') AS ip,
+                json_extract(payload,'$.generation') AS generation
+            FROM lifecycle WHERE at >= ?
+        ), predecessors AS (
+            SELECT binding, json_extract(payload,'$.old_slot_id') AS old_slot,
+                json_extract(payload,'$.old_ip') AS old_ip, generation - 1 AS old_generation,
+                max(generation) AS next_generation
+            FROM records WHERE kind='switched' AND binding IS NOT NULL
+                AND coalesce(json_extract(payload,'$.source'),'') <> 'manual_supplier'
+            GROUP BY binding, old_slot, old_ip, old_generation
+        ), keyed AS MATERIALIZED (
+            SELECT r.id, r.at, r.kind, r.payload,
+                coalesce(json_extract(r.payload,'$.chain_id'),
+                    CASE WHEN r.binding IS NOT NULL THEN
+                        'binding:' || r.binding || ':' || coalesce(p.next_generation,r.generation,1)
+                    WHEN r.kind='issued' THEN 'issued:' || r.id
+                    WHEN r.slot IS NOT NULL THEN 'slot:' || r.slot
+                    ELSE 'event:' || r.id END) AS chain
+            FROM records r LEFT JOIN predecessors p
+            ON r.kind IN ('webshare','draining') AND r.binding=p.binding
+                AND r.slot=p.old_slot AND r.ip=p.old_ip AND r.generation=p.old_generation
+        ), matched AS MATERIALIZED (
+            SELECT chain FROM keyed WHERE """
+            + where
+            + """ GROUP BY chain
+        ), ranked AS MATERIALIZED (
+            SELECT k.chain, min(k.at) AS latest FROM keyed k JOIN matched m ON k.chain=m.chain
+            GROUP BY k.chain
+        )
+        """
+        )
+        async with self.lock:
+            async with self.db.execute(cte + "SELECT count(*) FROM ranked", [cutoff, *values]) as cur:
+                total = (await cur.fetchone())[0]
+            async with self.db.execute(
+                cte
+                + """SELECT k.chain,k.payload FROM keyed k JOIN (
+                    SELECT chain,latest FROM ranked ORDER BY latest DESC,chain DESC LIMIT ? OFFSET ?
+                ) selected ON k.chain=selected.chain ORDER BY selected.latest DESC,k.chain DESC,k.at DESC,k.id DESC""",
+                [cutoff, *values, size, offset],
+            ) as cur:
+                rows = {}
+                for key, payload in await cur.fetchall():
+                    rows.setdefault(key, []).append(json.loads(payload))
+        return rows, total

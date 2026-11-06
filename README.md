@@ -1,6 +1,6 @@
 # RapIP
 
-当前版本：**v0.2.9**。分组补货规则支持直接选择 Webshare 库存，见 [v0.2.9 发布说明](docs/RELEASE_V0.2.9.md)。
+当前版本：**v0.2.10**。质量分组支持三种 IP 动态切换策略；代理追踪按双泳道展示，工位列表可以一键复制代理链接。见 [v0.2.10 发布说明](docs/RELEASE_V0.2.10.md)。
 
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 

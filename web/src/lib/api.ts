@@ -196,6 +196,13 @@ export interface Generation {
   drain_until: number | null;
 }
 export interface BindingData {
+  dynamic_switch?: {
+    status: string;
+    job_id: string;
+    started_at: number;
+    requested_session: string;
+    error: string;
+  } | null;
   unavailable?: string;
   rotation_status?: { status: string; next_at?: number; error?: string };
   group_id: string;

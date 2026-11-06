@@ -10,6 +10,7 @@ from fastapi import Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 
 from .connection import build_connection
+from .dynamic import DynamicPolicy
 from .models import GatewayError, IPState, uid
 from .quality import QualityPolicy
 from .quotas import aggregate_usage
@@ -215,6 +216,43 @@ def register(app, gateway, auth, operate):
         )
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
+    @app.get(prefix + "/lifecycle/chains", dependencies=deps)
+    async def lifecycle_chains(
+        view: Literal["links", "ips"] = "links",
+        group_id: str = Query("", max_length=32),
+        binding_id: str = Query("", max_length=64),
+        slot_id: str = Query("", max_length=64),
+        job_id: str = Query("", max_length=64),
+        q: str = Query("", max_length=128),
+        page: int = Query(1, ge=1, le=100000),
+        page_size: int = Query(12, ge=1, le=50),
+    ):
+        rows, total = await g.storage.chains(
+            view,
+            dict(group_id=group_id, binding_id=binding_id, slot_id=slot_id, job_id=job_id, q=q.strip()),
+            (page - 1) * page_size,
+            page_size,
+            time.time() - g.observer.retention.event_days * 86400,
+        )
+        current = {
+            g.lifecycle.key(b.id, b.generation): ("CURRENT" if not b.unavailable else "UNAVAILABLE")
+            for b in g.bindings.values()
+            if not b.released and b.id not in g.dynamic.pending
+        }
+        for bid, pending in g.dynamic.pending.items():
+            status = g.dynamic.public(g.bindings[bid])
+            current[pending["chain_id"]] = (
+                "REVIEW" if status["status"] == "UNCERTAIN" or pending.get("error") else "RUNNING"
+            )
+        return {
+            "items": [
+                {"id": key, "status": current.get(key), "events": entries} for key, entries in rows.items()
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
     @app.post(prefix + "/bindings/{binding_id}/cancel-reservation", dependencies=deps)
     async def cancel_reservation(binding_id: str, request: Request):
         return await operate(
@@ -271,6 +309,15 @@ def register(app, gateway, auth, operate):
             "rotation_policy",
             {**body.model_dump(), "reset": reset},
             lambda: g.rotation.save(group_id, body, reset),
+        )
+
+    @app.put(prefix + "/groups/{group_id}/dynamic-switch", dependencies=deps)
+    async def dynamic_switch(group_id: str, body: DynamicPolicy, request: Request):
+        return await operate(
+            request,
+            "dynamic_switch",
+            {"group_id": group_id, **body.model_dump()},
+            lambda: g.dynamic.save(group_id, body),
         )
 
     @app.get(prefix + "/groups", dependencies=deps)
@@ -435,6 +482,7 @@ def register(app, gateway, auth, operate):
                         node.fail_count += 1
                     node.state = IPState.FRESH if ok and not g.collision(node) else IPState.QUARANTINED
                     node.reason = "只读检测通过" if node.state == IPState.FRESH else "只读检测未通过/冷却重复"
+                    g.rotation.restore(node)
                     await g._persist()
                     g.changed.notify_all()
                 return {"healthy": ok, "latency_ms": ms, "replace_calls": 0}

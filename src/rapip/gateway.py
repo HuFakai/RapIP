@@ -12,6 +12,7 @@ from dataclasses import asdict
 import aiohttp
 
 from .config import Config, private_json
+from .dynamic import DynamicSwitch
 from .ipquality import IPQualityReports
 from .lifecycle import Lifecycle
 from .models import Binding, GatewayError, IPState, Node, Operation, Replacement, Route, uid
@@ -74,6 +75,7 @@ class Gateway:
         self.ipquality = IPQualityReports(self)
         self.quality = QualityManager(self)
         self.rotation = RotationManager(self)
+        self.dynamic = DynamicSwitch(self)
         self.workers = Workers(self)
         self.report_methods = {"ipquality": True}
 
@@ -116,8 +118,11 @@ class Gateway:
         self.observer.retention = RetentionPolicy.model_validate(state.get("retention", {}))
         self.quality.load(state.get("quality", {}))
         self.rotation.load(state.get("rotation", {}))
+        self.dynamic.load(state.get("dynamic", {}))
         self.workers.load(state.get("workers", {}))
         self.replenishment = state.get("replenishment", {})
+        self.lifecycle.related = state.get("lifecycle_related", {})
+        self.lifecycle.keys = state.get("lifecycle_keys", {})
         self.lifecycle.load(state.get("lifecycle_initialized", False))
         self.report_methods["ipquality"] = state.get("report_methods", {}).get("ipquality", True)
         self.settings.auto_failover = False  # v0.2.5: opt in per group, never inherit legacy global True
@@ -232,11 +237,14 @@ class Gateway:
             self.workers.remember_capacity(group)
         return {
             "schema": 5,
+            "lifecycle_related": self.lifecycle.related,
+            "lifecycle_keys": self.lifecycle.keys,
             "lifecycle_initialized": self.lifecycle.initialized,
             "replenishment": self.replenishment,
             "workers": self.workers.snapshot(),
             "report_methods": self.report_methods,
             "rotation": self.rotation.snapshot(),
+            "dynamic": self.dynamic.snapshot(),
             "quality": self.quality.snapshot(),
             "bytes_up": self.bytes_up,
             "bytes_down": self.bytes_down,
@@ -322,6 +330,12 @@ class Gateway:
 
     async def acquire(self, route: Route):
         slot_lock = self.slot_locks.setdefault(route.slot, asyncio.Lock())
+        result = await self._acquire(route, slot_lock)
+        if len(result) == 2:
+            return await self.dynamic.wait(route, *result)
+        return result
+
+    async def _acquire(self, route, slot_lock):
         async with asyncio.timeout(self.settings.pool_wait_timeout + 1):
             async with slot_lock:
                 async with self.changed:
@@ -339,6 +353,12 @@ class Gateway:
                     binding = self.binding_for(route.slot)
                     self.workers.validate(route, binding)
                     self.workers.remember_capacity(route.group)
+                    if binding and (
+                        binding.id in self.dynamic.pending
+                        or (binding.session != route.session and self.dynamic.should_start(binding, route))
+                    ):
+                        job_id = await self.dynamic.start_or_join(binding, route)
+                        return binding.id, job_id
                     if binding and binding.session == route.session:
                         if binding.country != route.country:
                             raise GatewayError("COUNTRY_CONFLICT", "同一 session 不能修改国家条件")
@@ -487,6 +507,7 @@ class Gateway:
         reservation_id="",
         source="manual",
     ):
+        self.dynamic.reject_control(binding)
         generation_before_wait = binding.generation
         draining = [
             n for n in self.nodes.values() if n.binding_id == binding.id and n.state == IPState.DRAINING
@@ -496,6 +517,7 @@ class Gateway:
         if session != binding.session and self.retired.get(f"{binding.slot}:{session}", 0) > time.time():
             raise GatewayError("SESSION_RETIRED", "新 session 已失效，请生成其他 ID")
         node = await self._wait_node(country, False, binding.group_id)
+        self.dynamic.reject_control(binding)
         if binding.released or binding.generation != generation_before_wait:
             raise GatewayError("VERSION_CONFLICT", "等待期间绑定已变化，请重试")
         if reservation_id:
@@ -528,6 +550,8 @@ class Gateway:
             binding.generation,
         )
         node.reason = "会话独占"
+        if old:
+            self.lifecycle.follow(old, binding)
         retire = draining + ([old] if old else [])
         for previous in retire:
             if previous.state == IPState.RESERVED and not previous.used:
@@ -621,6 +645,7 @@ class Gateway:
                     node = self.nodes.get(binding.node_id)
                     if not binding.reserved or not node or node.state != IPState.RESERVED or node.used:
                         raise GatewayError("RESERVATION_USED", "预留已被连接使用，未取消或更换，请刷新")
+                self.dynamic.before_release(binding)
                 self._release(binding, mode)
                 await self._persist()
                 if mode == "hard":
@@ -640,6 +665,7 @@ class Gateway:
             "binding_id": binding.id,
         }
         binding.rotation = {}
+        self.dynamic.last_commit.pop(binding.id, None)
         self.retired[f"{binding.slot}:{binding.session}"] = time.time() + self.settings.retired_session_ttl
         for node in self.nodes.values():
             if node.binding_id == binding.id and node.state == IPState.RESERVED and not node.used:
@@ -896,14 +922,16 @@ class Gateway:
         }
         present = {row["proxy_address"] for row in rows if row.get("proxy_address")}
         for ip, node in by_ip.items():
-            if ip not in present and node.state != IPState.REPLACING:
+            if ip not in present and node.state not in {IPState.REPLACING, IPState.ARCHIVED}:
                 if (
                     node.binding_id
                     and (binding := self.bindings.get(node.binding_id))
                     and binding.node_id == node.id
                 ):
                     binding.unavailable = "供应商已移除原出口；请显式更换"
-                    if self.rotation.failover(binding.group_id):
+                    if binding.id in self.dynamic.pending:
+                        self.dynamic.admission_error(node, "供应商已移除待准入出口")
+                    elif self.rotation.failover(binding.group_id):
                         binding.unavailable = ""
                         binding.node_id, binding.generation = None, binding.generation + 1
                     binding.last_detached = time.time()
@@ -929,6 +957,9 @@ class Gateway:
                 self.nodes[node.id] = node
                 self.quality.ensure_node(node)
             node.username, node.password = row["username"], row["password"]
+            if pending := self.dynamic.pending.get(node.binding_id):
+                if pending.get("candidate_id") == node.id:
+                    pending["supplier_valid"] = bool(row.get("valid"))
             if not row.get("valid", False):
                 if node.state == IPState.FRESH:
                     node.state = IPState.QUARANTINED
@@ -936,7 +967,9 @@ class Gateway:
                 continue
             if node.state == IPState.ARCHIVED and node.binding_id in self.bindings:
                 binding = self.bindings[node.binding_id]
-                if not binding.released and binding.node_id == node.id:
+                if not binding.released and binding.node_id == node.id and binding.id in self.dynamic.pending:
+                    node.state = IPState.QUARANTINED
+                elif not binding.released and binding.node_id == node.id:
                     node.state = IPState.RESERVED if binding.reserved else IPState.IN_USE
                     node.reason = "原出口重新出现，恢复保留绑定"
                     binding.unavailable = ""
@@ -1015,8 +1048,9 @@ class Gateway:
                         if node.state == IPState.FRESH
                         else ("冷却或跨账号重复" if collision else "健康检查未通过")
                     )
+                    dynamic_admission = node.binding_id in self.dynamic.pending
                     self.rotation.restore(node)
-                    if previous_state != node.state:
+                    if previous_state != node.state and not dynamic_admission:
                         self.lifecycle.add("admission", node=node, status=node.state, reason=node.reason)
                     node.fail_count = 0 if healthy else node.fail_count + 1
                     await self._persist()
@@ -1038,6 +1072,7 @@ class Gateway:
                         not healthy
                         and node.state == IPState.QUARANTINED
                         and not node.used
+                        and not node.binding_id
                         and node.reason == "健康检查未通过"
                         and node.fail_count >= self.settings.max_fail_count
                     ):
@@ -1076,6 +1111,13 @@ class Gateway:
     def _prune_history(self, now):
         policy = self.observer.retention
         self.lifecycle.cutoff = now - policy.event_days * 86400
+        self.lifecycle.related = {
+            key: chain
+            for key, chain in self.lifecycle.related.items()
+            if key in self.nodes and self.nodes[key].state != IPState.ARCHIVED
+        }
+        active = {f"{b.id}:{b.generation}" for b in self.bindings.values() if not b.released}
+        self.lifecycle.keys = {key: chain for key, chain in self.lifecycle.keys.items() if key in active}
         self.idempotency = {key: item for key, item in self.idempotency.items() if item["expires"] > now}
         protected = {item["id"] for item in self.idempotency.values() if item["expires"] > now}
         self.operations = {
@@ -1149,6 +1191,8 @@ class Gateway:
     async def process_replacement(self, job_id: str):
         job = self.replacements[job_id]
         async with self.account_locks[job.account_id]:
+            if job.state not in {"QUEUED", "PROCESSING", "RECONCILING"}:
+                return
             if any(
                 other.account_id == job.account_id
                 and other.id != job.id
@@ -1163,6 +1207,7 @@ class Gateway:
             ):
                 return
             provider, node = self.providers[job.account_id], self.nodes[job.node_id]
+            in_place = self.dynamic.active_for_job(job) is not None
             try:
                 if job.state == "QUEUED":
                     account, counts = self.accounts[job.account_id], self.counters[job.account_id]
@@ -1174,16 +1219,20 @@ class Gateway:
                     ):
                         async with self.changed:
                             job.state, job.error = "BUDGET_BLOCKED", "本地替换预算已用尽"
+                            if in_place:
+                                job.state = "FAILED"
+                                self.dynamic.fail(job, safe=True)
                             await self._persist()
                         return
                     rows = await provider.list_nodes()
                     if node.ip not in {row["proxy_address"] for row in rows}:
-                        if node.group_id != "default":
+                        if node.group_id != "default" or in_place:
                             async with self.changed:
                                 job.state, job.error = (
                                     "UNCERTAIN",
                                     "供应商外部变更，无法唯一继承分组席位；需对账",
                                 )
+                                self.dynamic.fail(job, safe=False)
                                 await self._persist()
                             return
                         async with self.changed:
@@ -1200,20 +1249,31 @@ class Gateway:
                     ):
                         async with self.changed:
                             job.state, job.error = "FAILED", "旧 IP 国家未知，未提交替换"
+                            self.dynamic.fail(job, safe=True)
                             await self._persist()
                         return
                     if job.fallback_enabled is not None and job.selection and job.selection["type"] != "any":
                         try:
                             ready = await preflight(provider, node.ip, job.selection)
-                        except (GatewayError, TimeoutError, ValueError, KeyError, TypeError, AttributeError):
+                        except (
+                            GatewayError,
+                            ProviderError,
+                            TimeoutError,
+                            ValueError,
+                            KeyError,
+                            TypeError,
+                            AttributeError,
+                        ):
                             async with self.changed:
                                 job.state, job.error = "FAILED", "指定规则预检未确认；未提交真实替换"
+                                self.dynamic.fail(job, safe=True)
                                 await self._persist()
                             return
                         if not ready:
                             async with self.changed:
                                 if not job.fallback_enabled:
                                     job.state, job.error = "FAILED", "指定规则库存不足；随机兜底已关闭"
+                                    self.dynamic.fail(job, safe=True)
                                     await self._persist()
                                     return
                                 job.selection = dict(RANDOM)
@@ -1228,6 +1288,9 @@ class Gateway:
                             >= account.replacement_budget
                         ):
                             job.state, job.error = "BUDGET_BLOCKED", "账号本地预算已用尽"
+                            if in_place:
+                                job.state = "FAILED"
+                                self.dynamic.fail(job, safe=True)
                             await self._persist()
                             return
                         if job.reservation_id:
@@ -1235,11 +1298,17 @@ class Gateway:
                                 self.rotation.check_reservation(job.reservation_id)
                             except GatewayError as error:
                                 job.state, job.error = "BUDGET_BLOCKED", error.message
+                                if in_place:
+                                    job.state = "FAILED"
+                                    self.dynamic.fail(job, safe=True)
                                 await self._persist()
                                 return
                         reason = self.quality.budget_reason(node, job, reservation_id=job.reservation_id)
                         if reason:
                             job.state, job.error = "BUDGET_BLOCKED", reason
+                            if in_place:
+                                job.state = "FAILED"
+                                self.dynamic.fail(job, safe=True)
                             await self._persist()
                             return
                         self.quality.debit(node, job)
@@ -1248,6 +1317,8 @@ class Gateway:
                         counts["submitted"] += 1
                         self.rotation.submitted(job)
                         await self._persist()
+                        if in_place:
+                            self._close_node(node.id)
                     country = (
                         node.country
                         if account.replacement_country == "original"
@@ -1268,7 +1339,8 @@ class Gateway:
                     if status.get("state") == "failed":
                         async with self.changed:
                             if (
-                                job.fallback_enabled
+                                not in_place
+                                and job.fallback_enabled
                                 and job.selection
                                 and job.selection["type"] != "any"
                                 and status.get("error_code") == NO_STOCK
@@ -1298,23 +1370,37 @@ class Gateway:
                                 job.state, job.error = "FAILED", "供应商拒绝替换"
                                 if status.get("error_code") == NO_STOCK:
                                     job.error += "：指定库存不足或影响范围未明确"
+                                no_effect = status.get("proxies_removed") == status.get("proxies_added") == 0
+                                if in_place and not no_effect:
+                                    job.state = "UNCERTAIN"
+                                self.dynamic.fail(job, safe=no_effect)
                             await self._persist()
                         return
                     if status.get("state") != "completed":
                         job.retry_at = time.time() + 1.5
                         return
                     async with self.changed:
-                        job.state = "RECONCILING"
+                        if in_place and not (
+                            status.get("proxies_removed") == status.get("proxies_added") == 1
+                        ):
+                            job.state, job.error = "UNCERTAIN", "供应商未确认一进一出；请人工核对"
+                            self.dynamic.fail(job, safe=False)
+                            await self._persist()
+                            return
+                        job.state, job.error = "RECONCILING", None
                         await self._persist()
                 if job.state == "RECONCILING":
                     rows = await provider.list_nodes()
-                    candidates = [row for row in rows if row["proxy_address"] not in job.before_ips]
-                    if node.ip in {row["proxy_address"] for row in rows}:
+                    before = set(job.before_ips)
+                    after = {row["proxy_address"] for row in rows}
+                    candidates = [row for row in rows if row["proxy_address"] not in before]
+                    if node.ip in after:
                         job.retry_at = time.time() + 5
                         return
-                    if len(candidates) != 1:
+                    if len(candidates) != 1 or (in_place and before - after != {node.ip}):
                         async with self.changed:
                             job.state, job.error = "UNCERTAIN", "列表差集无法唯一确定替换结果，请人工核对"
+                            self.dynamic.fail(job, safe=False)
                             await self._persist()
                         return
                     async with self.changed:
@@ -1331,7 +1417,14 @@ class Gateway:
                             and n.state != IPState.ARCHIVED
                         )
                         self.quality.inherit(node, fresh)
-                        if (
+                        self.lifecycle.inherit(node, fresh)
+                        if in_place:
+                            self.dynamic.candidate(job, fresh, bool(candidates[0].get("valid")))
+                            if not candidates[0].get("valid"):
+                                self.dynamic.admission_error(fresh, "供应商标记新 IP 不可用")
+                            elif fresh.group_id == "default" and not self.config.probe_enabled:
+                                self.dynamic.admission_error(fresh, "主动测活已关闭，请在 IP 资源池手动探测")
+                        elif (
                             job.rebind_id
                             and (binding := self.bindings.get(job.rebind_id))
                             and not binding.released
@@ -1361,6 +1454,8 @@ class Gateway:
                                 self.counters[job.account_id]["redraws"] += 1
                             else:
                                 fresh.reason = "命中冷却/重复，已停止自动重抽；请人工核对"
+                                if in_place:
+                                    self.dynamic.admission_error(fresh, fresh.reason)
                         elif collision:
                             fresh.reason = "重复重抽上限，需人工核对"
                         self.event(
@@ -1379,7 +1474,21 @@ class Gateway:
                         )
                     job.error, job.retry_at = str(error), time.time() + max(5, error.retry_after)
                     job.updated_at = time.time()
+                    if in_place and job.state in {"UNCERTAIN", "FAILED"}:
+                        # Only explicit client-side rejection is safe; ambiguous POST responses are held.
+                        if job.state == "FAILED" and error.status not in {400, 401, 403, 404, 422, 429}:
+                            job.state = "UNCERTAIN"
+                        self.dynamic.fail(job, safe=job.state == "FAILED")
                     self.event("error", "替换任务受阻", account_id=job.account_id, status=error.status)
+                    await self._persist()
+            except (ValueError, KeyError, TypeError, AttributeError):
+                if not in_place:
+                    raise
+                async with self.changed:
+                    safe = job.state == "QUEUED"
+                    job.state = "FAILED" if safe else "UNCERTAIN"
+                    job.error = "供应商响应格式异常，请核对任务"
+                    self.dynamic.fail(job, safe=safe)
                     await self._persist()
 
     async def operation(self, key: str, fingerprint: str, kind: str, action, group_id="", account_id=""):
@@ -1440,6 +1549,7 @@ class Gateway:
             "account_id": node.account_id if node else None,
             "connections": sum(t["binding_id"] == binding.id for t in self.tunnels.values()),
             "rotation_status": self.rotation.binding_status(binding),
+            "dynamic_switch": self.dynamic.public(binding),
             "status": "RELEASED"
             if binding.released
             else (

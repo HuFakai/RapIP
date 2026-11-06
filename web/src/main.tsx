@@ -4,6 +4,7 @@ import App from "./App";
 import { applyTheme, readTheme } from "./lib/theme";
 import "./style.css";
 import "./experience.css";
+import "./trace.css";
 
 applyTheme(readTheme());
 try {

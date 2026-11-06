@@ -1,3 +1,4 @@
+import { DynamicDialog } from "./DynamicDialog";
 import { ReplenishmentDialog } from "./ReplenishmentDialog";
 import { ReportMethods } from "./ReportMethods";
 import { LoadingState, TableLoading } from "../ui/loading";
@@ -434,6 +435,7 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
   const [replenishmentGroup, setReplenishmentGroup] = useState<Group | null>(
     null,
   );
+  const [dynamicGroup, setDynamicGroup] = useState<Group | null>(null);
   const [rotationGroup, setRotationGroup] = useState<Group | null>(null);
   const current = query.data?.items.find((g) => g.id === detail?.id) ?? detail;
   const results = checking?.items as QualityResult[] | undefined;
@@ -443,6 +445,14 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
         <ReplenishmentDialog
           group={replenishmentGroup}
           close={() => setReplenishmentGroup(null)}
+          notify={notify}
+        />
+      )}
+      {dynamicGroup && (
+        <DynamicDialog
+          key={dynamicGroup.id}
+          group={dynamicGroup}
+          close={() => setDynamicGroup(null)}
           notify={notify}
         />
       )}
@@ -559,10 +569,26 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                     >
                       {g.rotation?.enabled ? "定时轮换" : "固定 IP"}
                     </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="dynamic-table-button"
+                      onClick={() => setDynamicGroup(g)}
+                    >
+                      IP 动态切换
+                    </Button>
                     <small>
+                      {
+                        {
+                          pool: "仅池内",
+                          pool_then_in_place: "池内优先",
+                          in_place: "始终原位",
+                        }[g.dynamic_switch?.mode ?? "pool"]
+                      }{" "}
+                      ·{" "}
                       {g.rotation?.enabled
                         ? `今日 ${g.rotation.today_used}/${g.rotation.daily_limit} · 总计 ${g.rotation.total_used}/${g.rotation.total_limit}`
-                        : "断连保留 · 不过期"}
+                        : "断连保留"}
                     </small>
                   </td>
                   <td>

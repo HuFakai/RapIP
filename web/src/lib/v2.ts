@@ -34,7 +34,13 @@ export interface ReplenishmentRule {
   asns: string[];
   fallback: boolean;
 }
+export interface DynamicPolicy {
+  mode: "pool" | "pool_then_in_place" | "in_place";
+  wait_seconds: number;
+  cooldown_seconds: number;
+}
 export interface Group {
+  dynamic_switch?: DynamicPolicy;
   replenishment?: Partial<ReplenishmentRule>;
   workers?: {
     managed: boolean;

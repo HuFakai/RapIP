@@ -265,6 +265,8 @@ class RotationManager:
     def restore(self, node):
         # A supplier-replaced bound node is reserved until its quality evidence passes.
         binding = self.g.bindings.get(node.binding_id)
+        if binding and self.g.dynamic.restore(binding, node):
+            return
         if (
             binding
             and not binding.released
@@ -383,6 +385,8 @@ class RotationManager:
         ):
             raise GatewayError("NODE_BUSY", "资源不存在、正在检测或替换，请稍后重试")
         binding = g.bindings.get(node.binding_id)
+        if binding:
+            g.dynamic.reject_control(binding)
         if binding and not binding.released and body.bound_action == "reject":
             raise GatewayError("BOUND_NODE", "该 IP 已长期绑定，请选择等待断连或显式更换")
         target = body.selection.supplier(node)
