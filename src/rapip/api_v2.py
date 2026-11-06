@@ -30,7 +30,6 @@ class WorkerRule(Model):
 
 class ReportMethods(Model):
     ipquality: bool | None = None
-    ping0: bool | None = None
 
 
 class GroupCreate(Model):
@@ -126,23 +125,6 @@ def register(app, gateway, auth, operate):
             g.report_methods.update(body.model_dump(exclude_none=True))
             await g._persist()
         return g.report_methods
-
-    @app.get(prefix + "/nodes/{node_id}/ping0", dependencies=deps)
-    async def ping0_report(node_id: str):
-        node = g.nodes.get(node_id)
-        if not node:
-            raise GatewayError("NOT_FOUND", "资源不存在", 404)
-        return {
-            "report": await g.ping0.latest(node),
-            "running": g.ping0.running == node_id,
-            "busy": g.ping0.running is not None,
-            "node_ip": node.ip,
-            "enabled": g.report_methods["ping0"],
-        }
-
-    @app.post(prefix + "/nodes/{node_id}/ping0", dependencies=deps)
-    async def run_ping0(node_id: str, request: Request):
-        return await operate(request, "ping0_report", {}, lambda: g.ping0.run(node_id))
 
     options_cache = {}
 

@@ -118,3 +118,22 @@ async def test_connection_limits_are_editable_with_validation(client, gateway):
     assert response.status_code == 200
     assert gateway.settings.max_connections_per_binding == 256
     assert (await gateway.storage.load())["settings"]["max_connections_per_binding"] == 256
+
+
+async def test_report_switch_preserves_existing_ipquality_history(client, gateway, monkeypatch):
+    node = next(iter(gateway.nodes.values()))
+
+    async def execute(snapshot):
+        return raw(snapshot.ip)
+
+    monkeypatch.setattr(gateway.ipquality, "execute", execute)
+    await gateway.ipquality.run(node.id)
+    path = "/api/v1/quality/report-methods"
+    assert (await client.get(path)).status_code == 401
+    assert (await client.patch(path, json={"ipquality": False}, headers=HEADERS)).json() == {
+        "ipquality": False
+    }
+    response = await client.get(f"/api/v1/nodes/{node.id}/ip-quality", headers=HEADERS)
+    assert not response.json()["enabled"] and response.json()["report"]["ip"] == node.ip
+    with pytest.raises(GatewayError, match="已关闭"):
+        await gateway.ipquality.run(node.id)

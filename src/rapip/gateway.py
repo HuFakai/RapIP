@@ -15,7 +15,6 @@ from .config import Config, private_json
 from .ipquality import IPQualityReports
 from .models import Binding, GatewayError, IPState, Node, Operation, Replacement, Route, uid
 from .observability import Observability
-from .ping0 import Ping0Reports
 from .provider import ProviderError, Webshare
 from .quality import QualityManager
 from .quotas import public_usage
@@ -72,8 +71,7 @@ class Gateway:
         self.quality = QualityManager(self)
         self.rotation = RotationManager(self)
         self.workers = Workers(self)
-        self.ping0 = Ping0Reports(self)
-        self.report_methods = {"ipquality": True, "ping0": True}
+        self.report_methods = {"ipquality": True}
 
     async def start(self, background: bool = True, sync: bool = True):
         self.config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -115,7 +113,7 @@ class Gateway:
         self.quality.load(state.get("quality", {}))
         self.rotation.load(state.get("rotation", {}))
         self.workers.load(state.get("workers", {}))
-        self.report_methods.update(state.get("report_methods", {}))
+        self.report_methods["ipquality"] = state.get("report_methods", {}).get("ipquality", True)
         self.settings.auto_failover = False  # v0.2.5: opt in per group, never inherit legacy global True
         await self.observer.open()
         self.client = aiohttp.ClientSession(
@@ -1501,11 +1499,7 @@ class Gateway:
             for j in self.replacements.values()
         ):
             return "账号仍有替换或待核对任务，请先处理"
-        if (
-            ids & (self.probing | self.quality.busy)
-            or self.ipquality.running in ids
-            or self.ping0.running in ids
-        ):
+        if ids & (self.probing | self.quality.busy) or self.ipquality.running in ids:
             return "账号资源仍在检测，请稍后重试"
         if any(
             n.id in ids and n.state in {IPState.RESERVED, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}

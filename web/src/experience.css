@@ -616,6 +616,10 @@ body {
   align-items: center;
   gap: 20px;
 }
+.quality-report-heading > .quality-report-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .quality-report-heading strong {
   font-size: 20px;
 }
@@ -1418,29 +1422,6 @@ body {
 .proxy-links-content .quality-report-summary {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.report-tabs {
-  display: flex;
-  gap: 8px;
-  border-bottom: 1px solid #303741;
-  margin: 0 0 22px;
-  padding-bottom: 12px;
-}
-.report-tabs button {
-  flex: 1;
-  padding: 12px 14px;
-  border: 1px solid #353c47;
-  border-radius: 8px;
-  color: #aeb8c8;
-  background: #1b2028;
-  font: inherit;
-  cursor: pointer;
-}
-.report-tabs button[aria-selected="true"] {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, #161b21);
-  border-color: var(--accent);
-}
-.report-tabs button:focus-visible,
 .report-method-switch input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -1461,9 +1442,6 @@ body {
   font-size: 14px;
   cursor: pointer;
 }
-.report-method-switch + .report-method-switch {
-  border-top: 1px solid #303741;
-}
 .report-method-switch small {
   display: block;
   color: #aab2bf;
@@ -1476,28 +1454,12 @@ body {
   flex-shrink: 0;
   accent-color: var(--accent);
 }
-.ping0-field {
-  display: contents;
-}
-.ping0-field dd {
-  overflow-wrap: anywhere;
-}
-.ping0-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: var(--accent);
-}
 .ops-node-table .ops-inline-actions {
   flex-wrap: wrap;
   min-width: 285px;
   gap: 6px;
 }
 @media (max-width: 600px) {
-  .report-tabs {
-    flex-direction: column;
-  }
   .report-methods {
     margin: 0 12px 16px;
     padding: 15px;

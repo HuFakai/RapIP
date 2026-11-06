@@ -1,8 +1,10 @@
 # Webshare 多账号会话轮换网关项目规范
 
-更新日期：2026-11-06。阶段：v0.2.6 实现与发布验收。
+更新日期：2026-11-06。阶段：v0.2.7。
 
-v0.2.6 新增 [代理链接与工位规则](docs/NODE_PROXY_LINKS_PLAN.md)：行内复制立即预留，普通待用链接首次使用才分配；IPQuality / Ping0 双报告独立开关。持久化 schema 4，未使用预留取消不调用 Replace。
+v0.2.6 新增 [代理链接与工位规则](docs/NODE_PROXY_LINKS_PLAN.md)：行内复制立即预留，普通待用链接首次使用才分配。持久化 schema 4，未使用预留取消不调用 Replace。
+
+v0.2.7 保留 IPQuality 检测及开关。Ping0 仅提供当前 IP 的网页入口，不发起服务端请求。
 
 v0.2.5 生命周期以本文及 [升级方案](docs/V0.2.5_UPGRADE_PLAN.md)、[发布说明](docs/RELEASE_V0.2.5.md) 为准：固定配置长期保留、取消空闲回收，定时轮换按组明确开启。
 

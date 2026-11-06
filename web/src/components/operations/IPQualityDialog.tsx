@@ -1,6 +1,5 @@
-import { Ping0Report } from "./Ping0Report";
 import { useState } from "react";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { ExternalLink, FlaskConical, Loader2 } from "lucide-react";
 import { useQuery, type NodeData } from "@/lib/api";
 import { operation } from "@/lib/v2";
 import { date } from "@/lib/utils";
@@ -109,21 +108,34 @@ function XYReport({ node }: { node: NodeData | null }) {
             <strong className="mono">{node?.ip}</strong>
             <GroupLabel id={node?.group_id} />
           </div>
-          <Button
-            disabled={busy || query.data?.busy || !query.data?.enabled}
-            onClick={() => void run()}
-          >
-            {busy ? (
-              <Loader2 size={16} className="spin" />
-            ) : (
-              <FlaskConical size={16} />
+          <div className="quality-report-actions">
+            {node && (
+              <Button asChild variant="secondary">
+                <a
+                  href={`https://ping0.cc/ip/${encodeURIComponent(node.ip)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  在 Ping0 查看 <ExternalLink size={15} />
+                </a>
+              </Button>
             )}
-            {busy
-              ? "检测中，最长约 3 分钟"
-              : report
-                ? "重新检测"
-                : "开始质量检测"}
-          </Button>
+            <Button
+              disabled={busy || query.data?.busy || !query.data?.enabled}
+              onClick={() => void run()}
+            >
+              {busy ? (
+                <Loader2 size={16} className="spin" />
+              ) : (
+                <FlaskConical size={16} />
+              )}
+              {busy
+                ? "检测中，最长约 3 分钟"
+                : report
+                  ? "重新检测"
+                  : "开始质量检测"}
+            </Button>
+          </div>
         </div>
         <p className="field-help">
           只检测这个出口，不创建工位、不轮换
@@ -333,7 +345,6 @@ export function IPQualityDialog({
   node: NodeData | null;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"ipquality" | "ping0">("ipquality");
   return (
     <Dialog
       wide
@@ -342,44 +353,9 @@ export function IPQualityDialog({
         if (!open) onClose();
       }}
       title="IP 质量报告"
-      description="两种独立检测方式交叉参考，保留各自的评分含义，不改变分组准入。"
+      description="IPQuality 提供检测参考。也可直接在 Ping0 查看该 IP 的公开信息。"
     >
-      <div className="report-tabs" role="tablist" aria-label="质量报告来源">
-        {(["ipquality", "ping0"] as const).map((name) => (
-          <button
-            id={`report-tab-${name}`}
-            key={name}
-            role="tab"
-            aria-selected={tab === name}
-            aria-controls="quality-report-panel"
-            tabIndex={tab === name ? 0 : -1}
-            onKeyDown={(event) => {
-              if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-                event.preventDefault();
-                const next = tab === "ping0" ? "ipquality" : "ping0";
-                setTab(next);
-                document.getElementById(`report-tab-${next}`)?.focus();
-              }
-            }}
-            onClick={() => setTab(name)}
-          >
-            {name === "ipquality"
-              ? "IPQuality · 综合参考"
-              : "Ping0 · 风控与类型"}
-          </button>
-        ))}
-      </div>
-      <div
-        id="quality-report-panel"
-        role="tabpanel"
-        aria-labelledby={`report-tab-${tab}`}
-      >
-        {tab === "ipquality" ? (
-          <XYReport node={node} />
-        ) : (
-          node && <Ping0Report node={node} />
-        )}
-      </div>
+      <XYReport node={node} />
     </Dialog>
   );
 }

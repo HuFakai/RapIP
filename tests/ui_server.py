@@ -158,26 +158,6 @@ def main():
         @asynccontextmanager
         async def lifecycle(app):
             await gateway.start()
-            for node in gateway.nodes.values():
-                gateway.ping0.cache[node.id] = {
-                    "ip": node.ip,
-                    "checked_at": time.time(),
-                    "source_url": f"https://ping0.cc/ip/{node.ip}",
-                    "scope": "仅用于本地界面验证的模拟数据，不代表实际 IP 质量。",
-                    "llm_note": "大模型检测通过原网页手动触发。",
-                    "missing_fields": [],
-                    "fields": {
-                        "location": "美国 · 达拉斯（模拟）",
-                        "asn": "AS174",
-                        "asn_owner": "模拟运营商",
-                        "company": "模拟企业",
-                        "ip_type": "家庭宽带 IP · 代理 IP",
-                        "risk": 72,
-                        "risk_label": "极度风险（模拟）",
-                        "native_ip": "原生 IP",
-                        "shared_users": "1 - 10 (极好)",
-                    },
-                }
             await gateway.acquire(Route("admin", "qa-session".replace("-", ""), "01"))
             try:
                 yield
