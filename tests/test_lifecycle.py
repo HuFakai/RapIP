@@ -46,6 +46,10 @@ async def test_trace_separates_pool_switch_and_supplier_refill(client, gateway):
 
 @pytest.mark.parametrize("fallback", [True, False])
 async def test_group_stock_rejection_falls_back_only_when_enabled(client, gateway, monkeypatch, fallback):
+    async def options():
+        return {"available_ip_ranges_24": {"203.0.113.0/24": 2}}
+
+    monkeypatch.setattr(gateway.test_provider, "replacement_options", options, raising=False)
     res = await client.patch(
         "/api/v1/groups/default/replenishment",
         json={"mode": "ip_range", "ranges": ["203.0.113.0/24"], "fallback": fallback},

@@ -1,6 +1,6 @@
 # RapIP
 
-当前版本：**v0.2.8**。新增 SOCKS5 别名、代理链接 / IP 双向追踪和分组补货规则，见 [v0.2.8 发布说明](docs/RELEASE_V0.2.8.md)。
+当前版本：**v0.2.9**。分组补货规则支持直接选择 Webshare 库存，见 [v0.2.9 发布说明](docs/RELEASE_V0.2.9.md)。
 
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 

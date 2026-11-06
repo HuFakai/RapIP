@@ -470,7 +470,7 @@ class Gateway:
             )
             if cause != "manual_supplier":
                 rule = ReplenishmentRule.model_validate(self.replenishment.get(node.group_id, {}))
-                job.selection = rule.selection()
+                job.selection = rule.selection(node.country)
                 job.preferred_selection = job.selection
                 job.fallback_enabled = rule.fallback
             job.reservation_id = self.rotation.reservation_for(node)
@@ -1192,6 +1192,15 @@ class Gateway:
                             ids = self._ingest(job.account_id, rows)
                             await self._persist()
                         await self._probe_candidates(ids)
+                        return
+                    if (
+                        job.selection
+                        and job.selection["type"] == "country"
+                        and not job.selection.get("country_code")
+                    ):
+                        async with self.changed:
+                            job.state, job.error = "FAILED", "旧 IP 国家未知，未提交替换"
+                            await self._persist()
                         return
                     if job.fallback_enabled is not None and job.selection and job.selection["type"] != "any":
                         try:

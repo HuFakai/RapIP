@@ -1553,3 +1553,70 @@ body {
     gap: 8px;
   }
 }
+
+.replenish-picker {
+  display: grid;
+  gap: 10px;
+}
+.replenish-picker-head,
+.replenish-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.replenish-picker-head {
+  justify-content: space-between;
+}
+.replenish-search {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+.replenish-search input {
+  flex: 1;
+  min-width: 0;
+}
+.replenish-options {
+  display: grid;
+  max-height: 238px;
+  overflow-y: auto;
+  gap: 4px;
+  padding: 2px;
+}
+.replenish-options button {
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid #384451;
+  border-radius: 7px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.replenish-options button > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.replenish-options button small {
+  color: var(--muted, #aab2bf);
+  white-space: nowrap;
+}
+.replenish-options button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.replenish-options button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.replenish-options button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

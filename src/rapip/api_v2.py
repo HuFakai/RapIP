@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Literal
 
@@ -12,7 +13,7 @@ from .connection import build_connection
 from .models import GatewayError, IPState, uid
 from .quality import QualityPolicy
 from .quotas import aggregate_usage
-from .replenishment import ReplenishmentRule
+from .replenishment import ReplenishmentRule, common_stock
 from .rotation import ManualCommit, ManualPreview, RotationPolicy
 
 
@@ -124,12 +125,71 @@ def register(app, gateway, auth, operate):
             exit_ip=node.ip,
         )
 
+    options_cache = {}
+
+    async def account_options(account_id, provider):
+        cached = options_cache.get(account_id)
+        if cached and cached[0] is provider and cached[1] > time.monotonic():
+            return cached[2]
+        try:
+            async with asyncio.timeout(12):
+                result = await provider.replacement_options()
+            if not isinstance(result, dict) or result.get("error"):
+                return None
+        except Exception:
+            return None
+        options_cache[account_id] = (provider, time.monotonic() + 60, result)
+        return result
+
+    def group_providers(group_id):
+        ids = {
+            node.account_id
+            for node in g.nodes.values()
+            if node.group_id == group_id
+            and node.state != IPState.ARCHIVED
+            and node.account_id in g.providers
+            and g.accounts[node.account_id].enabled
+        }
+        return [(account_id, g.providers[account_id]) for account_id in sorted(ids)]
+
+    async def group_stock(providers):
+        results = await asyncio.gather(
+            *(account_options(account_id, provider) for account_id, provider in providers)
+        )
+        if not providers:
+            return {**common_stock([]), "error": "本组没有可用的上游账号；可选择随机或保持原国家"}
+        if any(result is None for result in results):
+            return {**common_stock([]), "error": "部分上游库存暂不可用，无法确认共同选项；请稍后刷新"}
+        try:
+            return common_stock(results)
+        except (AttributeError, TypeError, ValueError):
+            return {**common_stock([]), "error": "上游库存数据格式异常，请稍后刷新"}
+
+    @app.get(prefix + "/groups/{group_id}/replenishment-options", dependencies=deps)
+    async def replenishment_options(group_id: str):
+        if group_id not in g.quality.groups:
+            raise GatewayError("NOT_FOUND", "分组不存在", 404)
+        providers = group_providers(group_id)
+        return {"account_count": len(providers), **await group_stock(providers)}
+
     @app.patch(prefix + "/groups/{group_id}/replenishment", dependencies=deps)
     async def save_replenishment(group_id: str, body: ReplenishmentRule):
+        if group_id not in g.quality.groups:
+            raise GatewayError("NOT_FOUND", "分组不存在", 404)
+        providers = group_providers(group_id)
+        requested = {"country": [body.country], "asn": body.asns, "ip_range": body.ranges}.get(body.mode)
+        if requested is not None:
+            stock = await group_stock(providers)
+            if stock.get("error"):
+                raise GatewayError("STOCK_UNAVAILABLE", stock["error"], 409)
+            if not set(requested) <= {item["value"] for item in stock[body.mode]}:
+                raise GatewayError("STOCK_SELECTION_CHANGED", "所选目标不在当前共同库存中，请刷新重选", 409)
         async with g.changed:
             g._writable()
             if group_id not in g.quality.groups:
                 raise GatewayError("NOT_FOUND", "分组不存在", 404)
+            if requested is not None and providers != group_providers(group_id):
+                raise GatewayError("STOCK_SCOPE_CHANGED", "分组的上游账号已变化，请刷新重选", 409)
             g.replenishment[group_id] = body.model_dump()
             g.event("replenishment_rule", "已更新分组补货规则", group_id=group_id)
             await g._persist()
@@ -177,25 +237,12 @@ def register(app, gateway, auth, operate):
             await g._persist()
         return g.report_methods
 
-    options_cache = {}
-
     @app.get(prefix + "/accounts/{account_id}/replacement-options", dependencies=deps)
     async def replacement_options(account_id: str):
-        provider = g.providers.get(account_id)
-        if not provider:
+        if account_id not in g.providers:
             raise GatewayError("NOT_FOUND", "账号不存在", 404)
-        old = options_cache.get(account_id)
-        if old and old[0] is provider and old[1] > time.time():
-            return old[2]
-        try:
-            import asyncio
-
-            async with asyncio.timeout(12):
-                result = await provider.replacement_options()
-        except Exception:
-            result = {"error": "库存建议暂不可用；可输入参数后以供应商预检结果为准"}
-        options_cache[account_id] = (provider, time.time() + 60, result)
-        return result
+        result = await account_options(account_id, g.providers[account_id])
+        return result or {"error": "库存建议暂不可用；可输入参数后以供应商预检结果为准"}
 
     @app.get(prefix + "/replacements/requests", dependencies=deps)
     async def replacement_requests():

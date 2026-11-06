@@ -28,9 +28,10 @@ export const basicPolicy: Policy = {
   max_abuse_score: null,
 };
 export interface ReplenishmentRule {
-  mode: "any" | "country" | "ip_range";
+  mode: "any" | "original" | "country" | "asn" | "ip_range";
   country: string;
   ranges: string[];
+  asns: string[];
   fallback: boolean;
 }
 export interface Group {

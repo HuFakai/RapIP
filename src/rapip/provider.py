@@ -117,7 +117,13 @@ class Webshare:
         data = await self.request("GET", "/api/v3/proxy/list/stats", params={"plan_id": plan_id})
         return {
             key: data.get(key, {})
-            for key in ("available_countries", "available_asns", "available_ip_ranges_24")
+            for key in (
+                "available_countries",
+                "available_asns",
+                "available_ip_ranges_8",
+                "available_ip_ranges_16",
+                "available_ip_ranges_24",
+            )
         }
 
     async def replacement(self, job_id: str) -> dict:
