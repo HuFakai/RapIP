@@ -251,6 +251,7 @@ class QualityManager:
                     "round_submitted": sum(x["round_id"] == group["round_id"] for x in used),
                     "running": group["id"] in self.running,
                     "rotation": self.g.rotation.public(group["id"]),
+                    "replenishment": self.g.replenishment.get(group["id"], {}),
                     "workers": self.g.workers.public(group["id"]),
                     "reserved": sum(n.state == IPState.RESERVED for n in nodes),
                 }
@@ -332,7 +333,9 @@ class QualityManager:
 
     def _move(self, node, group):
         self.ensure_node(node)
+        previous_group = node.group_id
         node.group_id = group
+        self.g.lifecycle.add("moved", node=node, old_group_id=previous_group)
         node.membership_version += 1
         node.quality = {}
         node.state, node.reason = IPState.QUARANTINED, "分组变更，等待重新准入"
@@ -376,6 +379,7 @@ class QualityManager:
             for node in nodes:
                 self._move(node, "default")
             del self.groups[id]
+            self.g.replenishment.pop(id, None)
             await self.g._persist()
             self.g.changed.notify_all()
         await self.g._probe_candidates([n.id for n in nodes])
@@ -641,6 +645,7 @@ class QualityManager:
                         or node.state not in {IPState.FRESH, IPState.QUARANTINED}
                     ):
                         continue
+                    prior = node.state, self.state(node)
                     node.quality = verdict
                     net = evidence.get("network", {})
                     node.latency_ms = net.get("max_latency_ms")
@@ -665,6 +670,8 @@ class QualityManager:
                                 node.reason += f"；{reason}"
                             else:
                                 self.g._retire(node, "质量拒绝：" + node.reason, cause="quality")
+                    if prior != (node.state, self.state(node)):
+                        self.g.lifecycle.add("admission", node=node, status=node.state, reason=node.reason)
                 if not preview:
                     self.g.event(
                         "quality",

@@ -81,6 +81,7 @@ class Workers:
                 return route
         route = Route(self.g.config.socks_user, uid()[:12], self.free_worker(group), group=group)
         self.pending[group] = asdict(route)
+        self.g.lifecycle.add("issued", route=route, status="PENDING")
         return route
 
     def consume(self, route):
@@ -129,6 +130,7 @@ class Workers:
             binding.generation,
         )
         node.reason = "已预留·待连接；取消预留不消耗更换额度"
+        g.lifecycle.add("reserved", node=node, binding=binding, status="RESERVED")
         g.event("reservation", "已预留指定 IP", binding_id=binding.id, ip=node.ip, group_id=node.group_id)
         return route, True
 

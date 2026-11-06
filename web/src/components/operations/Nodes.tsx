@@ -65,7 +65,9 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
         node_id: node.id,
       });
       refreshAll();
-      await copyText(result.links[protocol]);
+      await copyText(
+        result.links[protocol === "socks5" ? "socks5_named" : protocol],
+      );
       notify(
         `${result.reserved ? "已预留此 IP 并复制" : "已复制当前绑定链接"} · 工位 ${result.worker_id ?? "匿名"}`,
       );
@@ -480,6 +482,13 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                         {protocol.toUpperCase()}
                       </Button>
                     ))}
+                    <Button asChild size="sm" variant="secondary">
+                      <a
+                        href={`#lifecycle?view=ips&q=${encodeURIComponent(n.ip)}`}
+                      >
+                        IP 轨迹
+                      </a>
+                    </Button>
                     {n.state === "RESERVED" && (
                       <Button
                         size="sm"

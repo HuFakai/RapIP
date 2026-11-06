@@ -234,7 +234,7 @@ async def test_single_owner_lock(gateway):
 
 
 async def test_storage_failure_stops_new_allocations(gateway, monkeypatch):
-    async def fail(value):
+    async def fail(value, *args):
         raise OSError("disk unavailable")
 
     monkeypatch.setattr(gateway.storage, "save", fail)

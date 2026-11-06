@@ -23,7 +23,7 @@ from .config import Account, Config
 from .connection import build_connection
 from .gateway import Gateway
 from .http_proxy import HttpProxy
-from .models import GatewayError, IPState, uid
+from .models import GatewayError, IPState, Route, uid
 from .provider import ProviderError
 from .retention import RetentionPolicy
 from .socks import SocksServer
@@ -181,7 +181,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.7", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.8", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -303,9 +303,23 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         if body.group_id not in gateway.quality.groups:
             raise GatewayError("NOT_FOUND", "分组不存在", 404)
         host = body.host or config.public_proxy_host or request.url.hostname or "127.0.0.1"
+        route = Route(config.socks_user, body.session_id, body.worker_id, body.country_code, body.group_id)
+        binding = gateway.binding_for(route.slot)
+        node = (
+            gateway.nodes.get(binding.node_id)
+            if binding and binding.session == route.session and binding.country == route.country
+            else None
+        )
         try:
             return build_connection(
-                config, host, body.worker_id, body.session_id, body.country_code, body.group_id, body.tunnel
+                config,
+                host,
+                body.worker_id,
+                body.session_id,
+                body.country_code,
+                body.group_id,
+                body.tunnel,
+                exit_ip=node.ip if node and node.state in {IPState.IN_USE, IPState.RESERVED} else None,
             )
         except ValueError as error:
             raise GatewayError("INVALID_CONNECTION_CONFIG", str(error), 422) from None
@@ -647,7 +661,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "tunnel_idle_timeout": 0,
                 "session_expires": False,
                 "fault_failover": "由质量组决定，默认关闭",
-                "version": "0.2.7",
+                "version": "0.2.8",
             },
         }
 

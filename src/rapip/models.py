@@ -119,6 +119,7 @@ class Binding:
     group_id: str = "default"
     policy_version: int = 0
     reserved: bool = False
+    connected_generation: int = 0
 
 
 @dataclass
@@ -143,6 +144,10 @@ class Replacement:
     reservation_id: str = ""
     rebind_id: str = ""
     new_ip: str = ""
+    fallback_enabled: bool | None = None
+    preferred_selection: dict | None = None
+    fallback_reason: str = ""
+    failed_provider_id: str = ""
 
 
 @dataclass

@@ -32,6 +32,7 @@ def build_connection(
     country: str | None,
     group: str = "default",
     tunnel: bool = False,
+    exit_ip: str | None = None,
 ):
     host = normalize_host(host)
     authority = f"[{host}]" if ":" in host else host
@@ -104,6 +105,7 @@ HTTP 代理：https 目标同样填写 http://{quote(username, safe="")}:<URL_EN
 - 管理页面 IP 质量报告内的“在 Ping0 查看”只会在浏览器打开对应 IP 的公开页面；不通过网关自动查询，不会影响绑定、准入或更换额度。IPQuality 可在质量检测源设置开关，关闭后保留历史。
 - 基础可用/稳定优先等级只检查网络；高质量等级需要配置对应检测源权限。UNKNOWN、PENDING、EXPIRED 不代表合格，缺 Key 或检测源限流不得判断为 IP 不合格。
 - 质量策略、自动更换开关与替换预算由管理员控制；网络超时不能触发客户端循环调用 rotate。自动更换只针对明确 FAIL，且受账号/全局/分组/本轮/席位预算约束。
+- 分组补货规则只控制退役后 Webshare 申请的随机、国家或号段；它不改变现有绑定，也不为当前连接等待供应商。替换完成后仍须准入，追踪请看 /api/v1/lifecycle。带 #别名 的 SOCKS5 链接给 v2rayN 导入，脚本继续用无片段的纯链接。
 - 用完一批任务再切换 session；复用相同 group + worker + session 便于维持出口。多浏览器共享 worker 时，切换前统一停止该工位的新请求，防止旧 session 回流。
 - 区分代理连接失败、代理认证失败与目标网站响应。HTTP CONNECT 建立成功不等于目标业务成功。SOCKS5/HTTPS 透传不解密目标 HTTP 状态码，也无法据此判断账号注册结果。
 
@@ -123,7 +125,10 @@ POST /api/v1/rotate/<worker_id>?group_id={group}，请求头 Idempotency-Key: <U
 6. RapIP 的历史日志受管理员保留期限和条数上限影响，成功日志可能未启用；需要持久业务审计时由项目保存脱敏业务记录，不依赖网关无限保留。
 
 """
+    remarks = f"RapIP-worker-{worker or '匿名'}-{session}-{exit_ip or '待分配'}"
     return {
+        "remarks": remarks,
+        "exit_ip": exit_ip,
         "host": host,
         "group_id": group,
         "username": username,
@@ -131,6 +136,7 @@ POST /api/v1/rotate/<worker_id>?group_id={group}，请求头 Idempotency-Key: <U
         "http_port": http_port,
         "links": {
             "socks5": f"socks5://{credentials}@{socks_server}",
+            "socks5_named": f"socks5://{credentials}@{socks_server}#{quote(remarks, safe='')}",
             "socks5h": f"socks5h://{credentials}@{socks_server}",
             "http": f"http://{credentials}@{http_server}",
         },

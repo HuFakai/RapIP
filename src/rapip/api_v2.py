@@ -12,6 +12,7 @@ from .connection import build_connection
 from .models import GatewayError, IPState, uid
 from .quality import QualityPolicy
 from .quotas import aggregate_usage
+from .replenishment import ReplenishmentRule
 from .rotation import ManualCommit, ManualPreview, RotationPolicy
 
 
@@ -94,6 +95,8 @@ def register(app, gateway, auth, operate):
         if len(key) > 128:
             raise GatewayError("INVALID_KEY", "幂等键过长", 422)
         route, reserved = await g.workers.issue(body.group_id, body.node_id, key)
+        binding = g.binding_for(route.slot)
+        node = g.nodes.get(binding.node_id) if binding and binding.session == route.session else None
         result = build_connection(
             g.config,
             g.config.public_proxy_host or request.url.hostname or "127.0.0.1",
@@ -101,8 +104,56 @@ def register(app, gateway, auth, operate):
             route.session,
             route.country,
             route.group,
+            exit_ip=node.ip if node and node.state in {IPState.IN_USE, IPState.RESERVED} else None,
         )
         return {**result, "reserved": reserved, "worker_id": route.worker, "session_id": route.session}
+
+    @app.get(prefix + "/bindings/{binding_id}/proxy-link", dependencies=deps)
+    async def current_link(binding_id: str, request: Request):
+        binding = g.bindings.get(binding_id)
+        node = g.nodes.get(binding.node_id) if binding and not binding.released else None
+        if not node or node.state not in {IPState.IN_USE, IPState.RESERVED} or node.binding_id != binding_id:
+            raise GatewayError("EXIT_UNAVAILABLE", "绑定已释放或当前无可用出口")
+        return build_connection(
+            g.config,
+            g.config.public_proxy_host or request.url.hostname or "127.0.0.1",
+            binding.worker,
+            binding.session,
+            binding.country,
+            binding.group_id,
+            exit_ip=node.ip,
+        )
+
+    @app.patch(prefix + "/groups/{group_id}/replenishment", dependencies=deps)
+    async def save_replenishment(group_id: str, body: ReplenishmentRule):
+        async with g.changed:
+            g._writable()
+            if group_id not in g.quality.groups:
+                raise GatewayError("NOT_FOUND", "分组不存在", 404)
+            g.replenishment[group_id] = body.model_dump()
+            g.event("replenishment_rule", "已更新分组补货规则", group_id=group_id)
+            await g._persist()
+            return g.replenishment[group_id]
+
+    @app.get(prefix + "/lifecycle", dependencies=deps)
+    async def lifecycle(
+        view: Literal["links", "ips"] = "links",
+        group_id: str = Query("", max_length=32),
+        binding_id: str = Query("", max_length=64),
+        slot_id: str = Query("", max_length=64),
+        job_id: str = Query("", max_length=64),
+        q: str = Query("", max_length=128),
+        page: int = Query(1, ge=1, le=100000),
+        page_size: int = Query(20, ge=1, le=100),
+    ):
+        items, total = await g.storage.history(
+            view,
+            dict(group_id=group_id, binding_id=binding_id, slot_id=slot_id, job_id=job_id, q=q.strip()),
+            (page - 1) * page_size,
+            page_size,
+            time.time() - g.observer.retention.event_days * 86400,
+        )
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
 
     @app.post(prefix + "/bindings/{binding_id}/cancel-reservation", dependencies=deps)
     async def cancel_reservation(binding_id: str, request: Request):

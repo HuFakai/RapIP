@@ -1,6 +1,6 @@
 # RapIP
 
-当前版本：**v0.2.7**。IP 质量报告保留 IPQuality 检测，并提供 Ping0 网页快捷入口，见 [v0.2.7 发布说明](docs/RELEASE_V0.2.7.md)。紧凑总览、服务端历史指标、质量分组与连接记录已实现；使用说明见 [v0.2 发布说明](docs/RELEASE_V0.2.md)。
+当前版本：**v0.2.8**。新增 SOCKS5 别名、代理链接 / IP 双向追踪和分组补货规则，见 [v0.2.8 发布说明](docs/RELEASE_V0.2.8.md)。
 
 带私有管理页面的 Webshare 多账号代理网关。SOCKS5 与 HTTP/HTTPS CONNECT 共用独占 session、冷却与持久化补货队列。
 

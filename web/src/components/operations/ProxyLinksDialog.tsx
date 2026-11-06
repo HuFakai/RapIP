@@ -8,7 +8,8 @@ import { Button } from "../ui/button";
 import { ErrorMessage } from "./Common";
 
 export interface ProxyLink {
-  links: { socks5: string; http: string };
+  links: { socks5: string; socks5_named: string; http: string };
+  remarks: string;
   reserved: boolean;
   worker_id: string;
   session_id: string;
@@ -29,7 +30,7 @@ export function ProxyLinksDialog({
     [error, setError] = useState("");
   const [link, setLink] = useState<ProxyLink | null>(null);
   const selected = groups.data?.items.find((item) => item.id === group);
-  async function copy(protocol: "socks5" | "http") {
+  async function copy(protocol: "socks5_named" | "socks5" | "http") {
     setBusy(true);
     setError("");
     try {
@@ -97,7 +98,7 @@ export function ProxyLinksDialog({
           IP 行内复制已绑定的链接。IP 不会因断连而释放。
         </p>
         <div className="ops-inline-actions">
-          {(["socks5", "http"] as const).map((protocol) => (
+          {(["socks5_named", "socks5", "http"] as const).map((protocol) => (
             <Button
               key={protocol}
               disabled={busy || !selected}
@@ -108,7 +109,12 @@ export function ProxyLinksDialog({
               ) : (
                 <Copy size={15} />
               )}
-              复制 {protocol.toUpperCase()}
+              复制{" "}
+              {protocol === "socks5_named"
+                ? "SOCKS5（含别名）"
+                : protocol === "socks5"
+                  ? "纯 SOCKS5"
+                  : "HTTP"}
             </Button>
           ))}
         </div>
@@ -116,6 +122,8 @@ export function ProxyLinksDialog({
         {link && (
           <div className="ops-detail">
             <p>
+              {link.remarks}
+              <br />
               最近生成：工位 <b>{link.worker_id}</b> · session{" "}
               <code>{link.session_id}</code>
             </p>

@@ -27,7 +27,14 @@ export const basicPolicy: Policy = {
   require_ipinfo: false,
   max_abuse_score: null,
 };
+export interface ReplenishmentRule {
+  mode: "any" | "country" | "ip_range";
+  country: string;
+  ranges: string[];
+  fallback: boolean;
+}
 export interface Group {
+  replenishment?: Partial<ReplenishmentRule>;
   workers?: {
     managed: boolean;
     capacity: number;

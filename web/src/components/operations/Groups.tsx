@@ -1,3 +1,4 @@
+import { ReplenishmentDialog } from "./ReplenishmentDialog";
 import { ReportMethods } from "./ReportMethods";
 import { LoadingState, TableLoading } from "../ui/loading";
 import { RotationDialog } from "./RotationDialog";
@@ -430,11 +431,21 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
       /* notified */
     }
   }
+  const [replenishmentGroup, setReplenishmentGroup] = useState<Group | null>(
+    null,
+  );
   const [rotationGroup, setRotationGroup] = useState<Group | null>(null);
   const current = query.data?.items.find((g) => g.id === detail?.id) ?? detail;
   const results = checking?.items as QualityResult[] | undefined;
   return (
     <div className="page-enter">
+      {replenishmentGroup && (
+        <ReplenishmentDialog
+          group={replenishmentGroup}
+          close={() => setReplenishmentGroup(null)}
+          notify={notify}
+        />
+      )}
       {rotationGroup && (
         <RotationDialog
           key={rotationGroup.id}
@@ -556,6 +567,13 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                   </td>
                   <td>
                     <div className="ops-inline-actions">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setReplenishmentGroup(g)}
+                      >
+                        补货规则
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"

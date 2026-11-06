@@ -1465,3 +1465,91 @@ body {
     padding: 15px;
   }
 }
+
+/* Two perspectives on the same lifecycle: switch events and supplier inventory. */
+.lifecycle-head,
+.lifecycle-views,
+.lifecycle-filter,
+.lifecycle-event-title,
+.lifecycle-context,
+.lifecycle-path,
+.lifecycle-event-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.lifecycle-head {
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+.lifecycle-note,
+.lifecycle-filter {
+  margin: 12px 20px;
+  color: var(--muted, #aab2bf);
+  font-size: 13px;
+}
+.lifecycle-filter a,
+.lifecycle-event-actions a {
+  color: var(--accent);
+}
+.lifecycle-list {
+  list-style: none;
+  margin: 0 20px;
+  padding: 0;
+}
+.lifecycle-event {
+  display: grid;
+  grid-template-columns: 155px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid #333b48;
+}
+.lifecycle-event > time {
+  padding-top: 3px;
+  color: var(--muted, #aab2bf);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.lifecycle-event-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--accent);
+}
+.lifecycle-webshare .lifecycle-event-body {
+  border-inline-start-color: var(--status-warn);
+}
+.lifecycle-event-title strong {
+  font-size: 15px;
+}
+.lifecycle-context,
+.lifecycle-event-actions {
+  font-size: 13px;
+}
+.lifecycle-event-body p {
+  margin: 0;
+  font-size: 13px;
+}
+.lifecycle-path {
+  font:
+    600 14px ui-monospace,
+    monospace;
+}
+.lifecycle-path a {
+  color: var(--accent);
+}
+.lifecycle-path small {
+  color: var(--status-warn);
+}
+.lifecycle-event-actions a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 720px) {
+  .lifecycle-event {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}

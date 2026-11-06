@@ -18,7 +18,12 @@ interface ConnectionData {
   host: string;
   socks_port: number;
   http_port: number;
-  links: { socks5: string; socks5h: string; http: string };
+  links: {
+    socks5: string;
+    socks5_named: string;
+    socks5h: string;
+    http: string;
+  };
   ai_guide: string;
   structured: {
     http: { server: string; username: string; password: string };
@@ -286,9 +291,11 @@ export function ConnectionDialog({
           {data && (
             <div className="connection-links">
               <CopyField
-                title="SOCKS5 完整链接"
-                value={data.links.socks5}
-                onCopy={() => void copy(data.links.socks5, "SOCKS5 完整链接")}
+                title="SOCKS5 导入链接（含别名）"
+                value={data.links.socks5_named}
+                onCopy={() =>
+                  void copy(data.links.socks5_named, "SOCKS5 含别名")
+                }
               />
               <CopyField
                 title="HTTP 完整链接"
@@ -296,7 +303,12 @@ export function ConnectionDialog({
                 onCopy={() => void copy(data.links.http, "HTTP 完整链接")}
               />
               <details className="dns-link">
-                <summary>curl / 远程 DNS 专用链接</summary>
+                <summary>脚本 / 远程 DNS 专用链接</summary>
+                <CopyField
+                  title="纯 SOCKS5 链接"
+                  value={data.links.socks5}
+                  onCopy={() => void copy(data.links.socks5, "纯 SOCKS5 链接")}
+                />
                 <CopyField
                   title="SOCKS5h 链接"
                   value={data.links.socks5h}

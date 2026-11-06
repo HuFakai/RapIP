@@ -61,6 +61,7 @@ import { GroupLabel, GroupNamesProvider } from "./components/operations/Common";
 import { Retention } from "./components/operations/Retention";
 import { Groups, QualitySources } from "./components/operations/Groups";
 import { Connections } from "./components/operations/Connections";
+import { Lifecycle } from "./components/operations/Lifecycle";
 import { Tasks } from "./components/operations/Tasks";
 import { operation, queryString, type Group } from "./lib/v2";
 import { AppearanceSettings } from "./components/AppearanceSettings";
@@ -79,7 +80,8 @@ type PageId =
   | "tasks"
   | "settings"
   | "groups"
-  | "connections";
+  | "connections"
+  | "lifecycle";
 const navigation = [
   {
     id: "overview",
@@ -116,6 +118,12 @@ const navigation = [
     label: "上游账号",
     icon: Globe2,
     caption: "Webshare 账号、备注与套餐用量",
+  },
+  {
+    id: "lifecycle",
+    label: "代理追踪",
+    icon: Workflow,
+    caption: "从 session 切换追到出口补货",
   },
   {
     id: "tasks",
@@ -447,6 +455,13 @@ function BindingsPage({
                 ))}
                 <div className="binding-timeline">
                   <strong>绑定事件</strong>
+                  <Button asChild variant="secondary" size="sm">
+                    <a
+                      href={`#lifecycle?view=links&binding_id=${encodeURIComponent(item.id)}`}
+                    >
+                      查看链接轨迹
+                    </a>
+                  </Button>
                   {history.data?.items.map((e) => (
                     <p key={e.id}>
                       <time>{date(e.at)}</time> · {e.message}
@@ -939,7 +954,7 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
               />
             </label>
             <label>
-              补货国家
+              旧任务补货国家（新任务按分组规则）
               <select
                 name="replacement_country"
                 defaultValue={editing.replacement_country}
@@ -1629,7 +1644,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.7</span>
+            <span className="version-tag">v0.2.8</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">
@@ -1767,6 +1782,9 @@ export default function App() {
               />
             )}
             {pageId === "accounts" && <AccountsPage notify={notify} />}
+            {pageId === "lifecycle" && (
+              <Lifecycle key={routeKey} notify={notify} />
+            )}
             {pageId === "tasks" && <Tasks key={routeKey} />}
             {pageId === "settings" && <SettingsPage notify={notify} />}
             <footer className="workspace-footer">
