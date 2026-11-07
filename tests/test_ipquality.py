@@ -131,7 +131,8 @@ async def test_report_switch_preserves_existing_ipquality_history(client, gatewa
     path = "/api/v1/quality/report-methods"
     assert (await client.get(path)).status_code == 401
     assert (await client.patch(path, json={"ipquality": False}, headers=HEADERS)).json() == {
-        "ipquality": False
+        "ipquality": False,
+        "ping0": False,
     }
     response = await client.get(f"/api/v1/nodes/{node.id}/ip-quality", headers=HEADERS)
     assert not response.json()["enabled"] and response.json()["report"]["ip"] == node.ip

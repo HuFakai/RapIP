@@ -1,3 +1,4 @@
+import { Ping0Report } from "./Ping0Report";
 import { useState } from "react";
 import { ExternalLink, FlaskConical, Loader2 } from "lucide-react";
 import { useQuery, type NodeData } from "@/lib/api";
@@ -345,6 +346,7 @@ export function IPQualityDialog({
   node: NodeData | null;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<"ipquality" | "ping0">("ipquality");
   return (
     <Dialog
       wide
@@ -353,9 +355,31 @@ export function IPQualityDialog({
         if (!open) onClose();
       }}
       title="IP 质量报告"
-      description="IPQuality 提供检测参考。也可直接在 Ping0 查看该 IP 的公开信息。"
+      description="两种独立的检测参考。报告不会改变绑定、分组准入或更换 IP。"
     >
-      <XYReport node={node} />
+      <div className="report-tabs" role="tablist" aria-label="IP 检测方法">
+        <Button
+          role="tab"
+          aria-selected={tab === "ipquality"}
+          variant={tab === "ipquality" ? "default" : "secondary"}
+          onClick={() => setTab("ipquality")}
+        >
+          IPQuality 综合参考
+        </Button>
+        <Button
+          role="tab"
+          aria-selected={tab === "ping0"}
+          variant={tab === "ping0" ? "default" : "secondary"}
+          onClick={() => setTab("ping0")}
+        >
+          Ping0 自查询
+        </Button>
+      </div>
+      {tab === "ipquality" ? (
+        <XYReport node={node} />
+      ) : (
+        <Ping0Report node={node} />
+      )}
     </Dialog>
   );
 }

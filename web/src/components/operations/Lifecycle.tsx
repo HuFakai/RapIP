@@ -1,745 +1,523 @@
+import { useState, type FormEvent } from "react";
 import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-} from "react";
-import {
-  ArrowUp,
-  ArrowLeft,
+  ArrowDown,
   ArrowRight,
-  ChevronLeft,
-  ChevronRight,
+  ArrowUp,
+  Check,
+  CircleDot,
   Clock3,
   GitBranch,
   Layers3,
-  Maximize2,
-  Minimize2,
   Radio,
   Search,
 } from "lucide-react";
-import { useQuery, type BindingData, type Paged } from "@/lib/api";
+import { useQuery, type Paged } from "@/lib/api";
 import { queryString, type Group } from "@/lib/v2";
 import { date } from "@/lib/utils";
 import { Button } from "../ui/button";
-import { Dialog } from "../ui/dialog";
+import { CountryFlag } from "../CountryFlag";
 import { LoadingState } from "../ui/loading";
-import { ErrorMessage, GroupLabel, Status } from "./Common";
+import { ErrorMessage, GroupLabel } from "./Common";
 
-const labels: Record<string, string> = {
-  issued: "生成待用链接",
-  reserved: "为链接预留 IP",
-  assigned: "链接获配 IP",
-  connected: "链接首次连通",
-  switched: "链接切换出口",
-  draining: "等待旧连接结束",
-  fault_retired: "旧出口因故障退役",
-  released: "解除链接绑定",
-  admission: "IP 准入检查",
-  moved: "IP 转入分组",
-  baseline: "开始追踪时已绑定",
-  in_place_started: "申请替换原 IP",
-  in_place_join: "更新待接收 session",
-  in_place_admission: "检查新 IP",
-  in_place_failed: "原位替换未完成",
-};
-const statuses: Record<string, string> = {
-  PASS: "准入通过",
-  QUEUED: "已排队",
-  SUBMITTING: "正在提交",
-  PROCESSING: "供应商处理",
-  RECONCILING: "核对库存",
-  COMPLETED: "已完成",
-  FAILED: "失败",
-  UNCERTAIN: "结果待核对",
-  BUDGET_BLOCKED: "额度不足",
-  CHECKING: "待检测",
-  QUARANTINED: "已隔离",
-  FRESH: "待分配",
-  IN_USE: "已准入",
-  CANCELLED: "已取消",
-  graceful: "平滑切换",
-  hard: "强制切换",
-  EXISTING: "已有绑定",
-  RESERVED: "已预留",
-};
-const sources: Record<string, string> = {
-  client_session: "客户端更换 session",
-  scheduled: "定时轮换",
-  manual: "手动切换",
-  manual_supplier: "手动供应商替换",
-  client_in_place: "客户端原位替换",
-};
-const runningSupplier = new Set([
-  "QUEUED",
-  "SUBMITTING",
-  "PROCESSING",
-  "RECONCILING",
-]);
-interface Selection {
-  type: string;
-  country_code?: string;
-  ip_ranges?: string[];
-  asn_numbers?: string[];
-}
-function selectionLabel(s: Selection) {
-  if (s.type === "country") return `国家 ${s.country_code}`;
-  if (s.type === "ip_range") return s.ip_ranges?.join("、");
-  if (s.type === "asn") return `ASN ${s.asn_numbers?.join("、")}`;
-  return "随机";
-}
 interface Entry {
   id: string;
   at: number;
   kind: string;
-  group_id: string;
-  binding_id?: string;
-  slot_id?: string;
-  old_slot_id?: string;
+  group_id?: string;
   worker?: string;
   session?: string;
   old_session?: string;
-  generation?: number;
   ip?: string;
   old_ip?: string;
   new_ip?: string;
-  job_id?: string;
-  supplier_id?: string;
-  previous_supplier_id?: string;
+  country?: string;
+  old_country?: string;
+  new_country?: string;
   status?: string;
   reason?: string;
   source?: string;
-  baseline?: boolean;
+  cause?: string;
+  job_id?: string;
+  supplier_id?: string;
+  binding_id?: string;
+  slot_id?: string;
+  generation?: number;
   historical?: boolean;
-  selection?: Selection;
-  preferred_selection?: Selection;
+  baseline?: boolean;
+  release_action?: string;
+  resource_action?: string;
+  quality_state?: string;
+  successes?: number;
+  samples?: number;
   fallback_reason?: string;
-  attempt?: number;
-  release_action?: "unused_reservation" | "used_exit" | "other";
+  selection?: {
+    type: string;
+    country_code?: string;
+    asn_numbers?: string[];
+    ip_ranges?: string[];
+  };
+  context?: {
+    old_session?: string;
+    session?: string;
+    old_ip?: string;
+    ip?: string;
+    source?: string;
+  };
 }
-interface Chain {
-  id: string;
-  status?: string;
-  events: Entry[];
+interface Path {
+  slot_id: string;
+  current: {
+    ip: string;
+    state: string;
+    group_id: string;
+    country?: string;
+  } | null;
+  changes: { ip: string; new_ip: string; at: number }[];
 }
-function traceLink(params: Record<string, string>) {
+interface Focus {
+  exit_country?: string;
+  worker?: string;
+  session: string;
+  ip?: string;
+  generation: number;
+  status: string;
+  group_id: string;
+}
+type Result = Paged<Entry> & { paths?: Path[]; focus?: Focus | null };
+const stateNames: Record<string, string> = {
+  FRESH: "待分配",
+  IN_USE: "使用中",
+  RESERVED: "已预留",
+  QUARANTINED: "等待复检",
+  REPLACING: "更换中",
+  DRAINING: "等待旧连接结束",
+};
+function href(params: Record<string, string>) {
   return "#lifecycle?" + queryString(params);
 }
-const supplierTitles: Record<string, string> = {
-  QUEUED: "旧 IP 排队更换",
-  SUBMITTING: "提交 Webshare",
-  PROCESSING: "Webshare 正在换 IP",
-  RECONCILING: "确认新旧 IP",
-  COMPLETED: "Webshare 已换号",
-  FAILED: "Webshare 更换失败",
-  UNCERTAIN: "更换结果待核对",
-  BUDGET_BLOCKED: "更换额度不足",
-  CANCELLED: "更换已取消",
-};
-const ipStates: Record<string, string> = {
-  FRESH: "待分配",
-  RESERVED: "已预留",
-  IN_USE: "已绑定",
-  DRAINING: "旧连接排空中",
-  REPLACING: "更换中",
-  QUARANTINED: "隔离中",
-};
-function title(e: Entry) {
-  if (e.kind === "webshare")
-    return e.status === "COMPLETED" && !e.new_ip
-      ? "新 IP 未能确认"
-      : (supplierTitles[e.status ?? ""] ?? "Webshare 更换");
-  if (e.kind === "released" && e.release_action === "unused_reservation")
-    return "取消未使用预留";
-  if (e.kind === "assigned" && e.reason === "预留链接已启用，会话独占")
-    return "预留链接已启用";
-  if (e.kind === "in_place_admission" && e.status === "PASS")
-    return "新 IP 通过准入";
-  if (e.kind === "admission" && e.status)
-    return e.status === "FRESH" || e.status === "IN_USE"
-      ? "IP 通过准入"
-      : e.status === "QUARANTINED"
-        ? "IP 隔离"
-        : "IP 准入检查";
-  if (e.kind === "baseline" && e.status === "RESERVED")
-    return "开始追踪时已预留";
-  return labels[e.kind] ?? e.kind;
-}
-function ipHref(ip: string, slot = "") {
-  return traceLink({ view: "ips", q: ip, slot_id: slot });
-}
-function IPValue({ ip, slot = "" }: { ip: string; slot?: string }) {
-  return (
-    <a className="trace-value" href={ipHref(ip, slot)} title={`追踪 IP ${ip}`}>
-      <code>{ip}</code>
-    </a>
-  );
-}
-interface IPPath {
-  slot_id: string;
-  current: { ip: string; state: string; group_id: string } | null;
-  changes: { ip: string; new_ip: string; at: number; group_id: string }[];
-}
-function IPPaths({
-  paths,
-  focusedIP,
+function IP({
+  ip,
+  country,
   slot,
 }: {
-  paths: IPPath[];
-  focusedIP: string;
-  slot: string;
+  ip?: string;
+  country?: string;
+  slot?: string;
 }) {
   return (
-    <aside className="surface trace-focus">
-      <header>
-        <Layers3 size={15} />
-        <strong>
-          {focusedIP ? (
-            <>
-              正在追踪 <code>{focusedIP}</code>
-            </>
-          ) : (
-            "正在追踪同一资源席位"
-          )}
-        </strong>
-        {paths.length > 1 && <span>{paths.length} 个不同席位</span>}
-      </header>
-      {paths.map((path) => (
-        <div key={path.slot_id} className="trace-focus-row">
-          <div className="trace-focus-current">
-            <span>
-              席位 <code>{path.slot_id.slice(0, 8)}</code>
-            </span>
-            {path.current ? (
-              <>
-                <b>当前 IP</b>
-                <IPValue ip={path.current.ip} slot={path.slot_id} />
-                <span>
-                  {ipStates[path.current.state] ?? path.current.state}
-                </span>
-                <GroupLabel id={path.current.group_id} showId={false} />
-              </>
-            ) : (
-              <span>此席位暂无当前 IP</span>
-            )}
-          </div>
-          {path.changes.length ? (
-            <ol className="trace-ip-history" aria-label="Webshare 更换历史">
-              {path.changes.map((change) => (
-                <li key={`${change.at}:${change.ip}:${change.new_ip}`}>
-                  <time>{date(change.at)}</time>
-                  <IPValue ip={change.ip} slot={path.slot_id} />
-                  <ArrowRight size={13} aria-label="更换为" />
-                  <IPValue ip={change.new_ip} slot={path.slot_id} />
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>没有查到已确认的 Webshare 更换记录。</p>
-          )}
-        </div>
-      ))}
-      {!paths.length && (
-        <p>没有查到这个 IP 的资源席位，仍可查看下方直接匹配的记录。</p>
-      )}
-      {!!slot && focusedIP && (
-        <a className="trace-text-link" href={ipHref(focusedIP)}>
-          查看该 IP 的所有席位
+    <span className="journey-ip">
+      <CountryFlag code={country ?? null} />
+      <b>{country || "国家未记录"}</b>
+      {ip ? (
+        <a href={href({ view: "ips", q: ip, slot_id: slot ?? "" })}>
+          <code>{ip}</code>
         </a>
+      ) : (
+        <span>IP 待分配</span>
       )}
-    </aside>
+    </span>
   );
 }
-function duration(seconds: number) {
-  if (seconds < 1) return `${Math.max(0, Math.round(seconds * 1000))} ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
-  if (seconds < 3600)
-    return `${Math.floor(seconds / 60)} 分 ${Math.floor(seconds % 60)} 秒`;
-  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分`;
-}
-function laneElapsed(items: Entry[], running: boolean, now: number) {
-  if (!items.length || (items.length === 1 && !running)) return "—";
-  return duration((running ? now : items[0].at) - items[items.length - 1].at);
-}
-
-function Lane({
-  name,
-  items,
-  supplier,
-  expanded,
-  onPick,
-  running,
-  now,
-}: {
-  name: string;
-  items: Entry[];
-  supplier?: boolean;
-  expanded: boolean;
-  onPick: (entry: Entry) => void;
-  running: boolean;
-  now: number;
-}) {
-  const viewport = useRef<HTMLDivElement>(null);
-  const nodes = useRef(new Map<string, HTMLButtonElement>());
-  const [cols, setCols] = useState(3);
-  const [position, setPosition] = useState(0);
-  const [edges, setEdges] = useState({ start: true, end: false });
-  const topId = items[0]?.id;
-  useEffect(() => {
-    const el = viewport.current;
-    if (!el) return;
-    const update = () => {
-      setCols(Math.max(1, Math.floor(el.clientWidth / 158)));
-      setEdges({
-        start: el.scrollLeft < 3,
-        end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 3,
-      });
-    };
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    el.addEventListener("scroll", update, { passive: true });
-    update();
-    return () => {
-      observer.disconnect();
-      el.removeEventListener("scroll", update);
-    };
-  }, [expanded, topId, items.length]);
-  function navigate(step: number) {
-    if (expanded) {
-      const next = Math.max(0, Math.min(items.length - 1, position + step));
-      const node = nodes.current.get(items[next]?.id);
-      node?.focus({ preventScroll: true });
-      node?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      setPosition(next);
-    } else {
-      const el = viewport.current;
-      if (!el) return;
-      el.scrollBy({
-        left: step * Math.max(158, el.clientWidth - 70),
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "instant"
-          : "smooth",
-      });
+function describe(e: Entry): [string, string, string] {
+  const source =
+    e.source === "client_session"
+      ? "客户端"
+      : e.source === "scheduled"
+        ? "定时任务"
+        : "管理员";
+  switch (e.kind) {
+    case "issued":
+      return [
+        "生成了待用链接",
+        "这份链接还没有使用，也没有占用 IP；首次连接时再分配。",
+        "info",
+      ];
+    case "reserved":
+      return [
+        "链接预留了这个 IP",
+        "你复制了指定 IP 的代理链接。系统已把它留给对应工位，等待首次连接。",
+        "info",
+      ];
+    case "assigned":
+      return [
+        "代理链接获配了 IP",
+        e.reason?.includes("预留")
+          ? "客户端开始使用之前预留的链接；此 IP 现由该工位和 session 独占。"
+          : "系统从这个分组的待分配池中选出 IP，绑定给下面的工位和 session。",
+        "good",
+      ];
+    case "connected":
+      return [
+        "这份链接首次连通",
+        "已成功通过该出口建立代理隧道。这说明网络连通，不代表目标网站的业务操作已经成功。",
+        "good",
+      ];
+    case "session_requested":
+      return [
+        "客户端提交了新 session",
+        `同一工位从 ${e.old_session ?? "原 session"} 改为 ${e.session ?? "新 session"}，开始寻找下一个可用出口；此时还未完成切换。`,
+        "info",
+      ];
+    case "rotation_requested":
+      return [
+        "收到轮换出口请求",
+        `${source}要求换出口；接下来先寻找合格的备用 IP，当前请求本身还没有完成换号。`,
+        "info",
+      ];
+    case "switched":
+      return [
+        "链接已切换到新出口",
+        e.source === "client_in_place"
+          ? "Webshare 原位替换及新 IP 准入已完成，最新接收的 session 开始使用新出口。"
+          : "系统已从待分配池取得新 IP，并交给这个链接。旧 IP 的后续补货会作为下面的独立事件显示。",
+        "good",
+      ];
+    case "draining":
+      return [
+        "旧 IP 正在等待连接结束",
+        "新连接已改用新出口；旧 TCP 暂时保留，排空或达到时限后再处理旧 IP。",
+        "info",
+      ];
+    case "released":
+      return [
+        "会话绑定已释放",
+        e.release_action === "unused_reservation"
+          ? "尚未使用的预留已取消。旧链接失效，未调用 Webshare。"
+          : e.resource_action !== "return_after_drain"
+            ? "旧版本留下的释放记录；当时的后续处理请以下面的补货事件为准。"
+            : "旧 session 已失效。当前版本保留原 IP，等连接结束后重新按本组准入参与分配，不调用 Webshare。",
+        "info",
+      ];
+    case "returned":
+      return [
+        "原 IP 已返回待分配池",
+        "IP 没有更换，也没有消耗 Webshare 额度；其他符合条件的链接现在可以获配它。若准入已过期，则先等待复检。",
+        "good",
+      ];
+    case "request_failed":
+      return [
+        "这次切换没有完成",
+        e.reason ?? "没有拿到可用的新出口；请保留原绑定并查看原因。",
+        "warn",
+      ];
+    case "fault_retired":
+      return [
+        "旧出口因连接故障退役",
+        e.reason ?? "触发了本组已开启的故障转移规则。",
+        "warn",
+      ];
+    case "in_place_started":
+      return [
+        "收到新 session，开始原位换号",
+        `新候选是 ${e.session ?? "未记录"}。这一模式直接替换原 IP，等待供应商结果和新 IP 准入。`,
+        "info",
+      ];
+    case "in_place_join":
+      return [
+        "更新了本次换号的接收 session",
+        `候选更新为 ${e.session ?? "未记录"}，仍复用同一项 Webshare 任务，没有再启动一笔换号。`,
+        "info",
+      ];
+    case "in_place_failed":
+      return [
+        "原位换号遇到问题",
+        e.reason ?? "暂未能把合格的新出口交给客户端，请先核对当前任务。",
+        "warn",
+      ];
+    case "in_place_admission":
+      return e.status === "PASS"
+        ? [
+            "新 IP 通过质量检查",
+            "新出口已符合分组要求，接下来交给本次任务最新接收的 session。",
+            "good",
+          ]
+        : [
+            "正在检查换回来的新 IP",
+            e.reason ??
+              "供应商已经返回新 IP；在确认连通和符合分组要求之前，不会交给客户端。",
+            "info",
+          ];
+    case "admission":
+      return e.status === "FRESH" || e.status === "IN_USE"
+        ? [
+            "IP 检查通过，可以分配",
+            `${e.successes != null ? `网络样本 ${e.successes}/${e.samples ?? "—"} 成功。` : ""}${e.reason ?? "这个 IP 已满足当前分组的准入要求。"}`,
+            "good",
+          ]
+        : [
+            "IP 暂停分配，等待检查",
+            e.reason ??
+              "当前没有足够的有效证据确认它符合分组要求；暂时隔离，不等于 IP 已经被更换。",
+            "warn",
+          ];
+    case "moved":
+      return [
+        "IP 加入了这个分组",
+        "之后按这个分组的质量要求和分配规则使用；迁移分组本身不更换 IP。",
+        "info",
+      ];
+    case "baseline":
+      return [
+        "从已有绑定开始记录",
+        "这是升级时观察到的状态；更早没有记录的操作无法还原。",
+        "info",
+      ];
+    case "webshare": {
+      const descriptions: Record<string, [string, string, string]> = {
+        QUEUED: [
+          "旧 IP 进入 Webshare 更换队列",
+          "系统准备为旧 IP 补货；排队还不表示供应商已完成换号。",
+          "info",
+        ],
+        SUBMITTING: [
+          "正在向 Webshare 提交换号",
+          "这一步会提交供应商更换请求并占用相应额度。",
+          "info",
+        ],
+        PROCESSING: [
+          "Webshare 正在处理换号",
+          "供应商已受理任务；系统正在等待结果，没有因为客户端重试重复提交。",
+          "info",
+        ],
+        RECONCILING: [
+          "正在确认 Webshare 换回的 IP",
+          "供应商报告已处理，系统正在比对资源列表，确认旧 IP 与新 IP 的对应关系。",
+          "info",
+        ],
+        COMPLETED: [
+          "Webshare 已返回新 IP",
+          e.new_ip
+            ? "旧 IP 已换成下方的新 IP；新 IP 仍要通过本组质量检查，之后才进入待分配池。"
+            : "旧 IP 已移除，但这次记录没有确认新 IP；不能据此认定已补回可用库存。",
+          "good",
+        ],
+        FAILED: [
+          "Webshare 更换失败",
+          e.reason ??
+            "供应商未完成更换，请查看原任务；不会把未知结果当作成功。",
+          "warn",
+        ],
+        UNCERTAIN: [
+          "Webshare 结果暂时无法确认",
+          e.reason ??
+            "自动重复提交已暂停，避免重复消耗额度，需要先核对原任务。",
+          "warn",
+        ],
+        BUDGET_BLOCKED: [
+          "更换因额度不足暂停",
+          e.reason ?? "当前预算不允许继续提交供应商请求。",
+          "warn",
+        ],
+      };
+      return (
+        descriptions[e.status ?? ""] ?? [
+          "Webshare 任务状态更新",
+          e.reason ?? e.status ?? "状态未记录",
+          "info",
+        ]
+      );
     }
+    default:
+      return ["资源状态有更新", e.reason ?? e.kind, "info"];
   }
-  const rows = expanded
-    ? Array.from({ length: Math.ceil(items.length / cols) }, (_, i) =>
-        items.slice(i * cols, (i + 1) * cols),
-      )
-    : [items];
-  return (
-    <div className={`trace-lane ${supplier ? "supplier" : "business"}`}>
-      <div className="trace-lane-label">
-        <b>
-          {supplier ? <Layers3 size={13} /> : <GitBranch size={13} />}
-          {name}
-        </b>
-        <small>
-          <Clock3 size={12} />
-          {laneElapsed(items, running, now)}
-          {running && <i title="进行中" />}
-        </small>
-        {items.length > 1 && (
-          <div className="trace-stepper">
-            <button
-              type="button"
-              title="查看更新的节点"
-              aria-label={`${name}查看更新的节点`}
-              disabled={expanded ? position === 0 : edges.start}
-              onClick={() => navigate(-1)}
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <button
-              type="button"
-              title="查看更早的节点"
-              aria-label={`${name}查看更早的节点`}
-              disabled={expanded ? position >= items.length - 1 : edges.end}
-              onClick={() => navigate(1)}
-            >
-              <ChevronRight size={14} />
-            </button>
-          </div>
-        )}
-      </div>
-      <div
-        className={`trace-viewport ${expanded ? "snake" : ""}`}
-        ref={viewport}
-        style={
-          {
-            "--snake-width": `${Math.min(cols, items.length) * 138 + Math.max(0, Math.min(cols, items.length) - 1) * 20}px`,
-          } as CSSProperties
-        }
-      >
-        {!items.length && <span className="trace-no-stage">— 没有记录</span>}
-        {rows.map((row, rowIndex) => (
-          <div
-            className={`trace-track ${expanded && rowIndex % 2 ? "reverse" : ""}`}
-            key={rowIndex}
-          >
-            {row.map((e, i) => {
-              const index = expanded ? rowIndex * cols + i : i;
-              const previous = items[index + 1];
-              const stamp = new Date(e.at * 1000).toLocaleTimeString("zh-CN", {
-                hour12: false,
-              });
-              return (
-                <div className="trace-segment" key={e.id}>
-                  {i > 0 &&
-                    (expanded && rowIndex % 2 ? (
-                      <ArrowRight
-                        className="trace-arrow"
-                        size={14}
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <ArrowLeft
-                        className="trace-arrow"
-                        size={14}
-                        aria-hidden="true"
-                      />
-                    ))}
-                  <button
-                    ref={(element) => {
-                      if (element) nodes.current.set(e.id, element);
-                      else nodes.current.delete(e.id);
-                    }}
-                    className={`trace-node ${e.status === "FAILED" || e.status === "UNCERTAIN" || e.status === "QUARANTINED" ? "needs-attention" : ""}`}
-                    onFocus={() => setPosition(index)}
-                    onClick={() => onPick(e)}
-                    title={`${title(e)} · ${date(e.at)}${e.reason ? "\n" + e.reason : ""}`}
-                  >
-                    <strong>{title(e)}</strong>
-                    <code>{e.new_ip || e.ip || e.session || "—"}</code>
-                    <small>
-                      <time>{stamp}</time>
-                      {previous && <span>+{duration(e.at - previous.at)}</span>}
-                    </small>
-                  </button>
-                  {expanded &&
-                    i === row.length - 1 &&
-                    rowIndex < rows.length - 1 && (
-                      <ArrowUp
-                        className="trace-turn"
-                        size={14}
-                        aria-hidden="true"
-                      />
-                    )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
-
-function TraceCard({
-  chain,
-  onPick,
-  now,
-}: {
-  chain: Chain;
-  onPick: (e: Entry) => void;
-  now: number;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const events = chain.events;
-  const supplier = events.filter((e) =>
-    ["draining", "webshare", "admission", "in_place_admission"].includes(
-      e.kind,
-    ),
-  );
-  const business = events.filter((e) => !supplier.includes(e));
-  const latest = events[0];
-  const summary =
-    business.find((e) => e.kind === "switched" || e.kind === "in_place_join") ??
-    business[0] ??
-    latest;
-  const supplierLatest = supplier.find((e) => e.kind === "webshare");
-  const switched = business.find((e) => e.kind === "switched");
-  const released = business.find((e) => e.kind === "released");
-  const reserved = business.find(
-    (e) => e.kind === "reserved" || e.status === "RESERVED",
-  );
-  const connected = business.find(
-    (e) => e.kind === "connected" || e.kind === "assigned",
-  );
-  const supplierChange = supplier.find(
-    (e) =>
-      e.kind === "webshare" &&
-      e.status === "COMPLETED" &&
-      e.new_ip &&
-      e.ip &&
-      e.ip !== e.new_ip,
-  );
-  const supplierActive =
-    !!supplierLatest && runningSupplier.has(supplierLatest.status ?? "");
-  const businessActive = chain.status === "RUNNING";
-  const state =
-    chain.status === "RESERVED"
-      ? "已预留 · 待连接"
-      : chain.status === "CURRENT"
-        ? "当前绑定"
-        : chain.status === "UNAVAILABLE"
-          ? "当前出口不可用"
-          : chain.status === "RUNNING"
-            ? "切换中"
-            : chain.status === "REVIEW"
-              ? "切换待处理"
-              : released
-                ? "绑定已解除"
-                : latest.kind === "issued"
-                  ? "待首次连接"
-                  : events.some((e) => e.kind === "in_place_failed")
-                    ? "切换未完成"
-                    : "历史";
-  const businessNote =
-    released?.release_action === "unused_reservation"
-      ? "预留未使用，已解除，没有更换这个 IP"
-      : released && reserved && !connected && !switched
-        ? "预留已解除；这段记录没有显示链接连通过"
-        : businessActive && !switched
-          ? "仍在等待 Webshare 或新 IP 准入"
-          : !switched && connected
-            ? connected.kind === "connected"
-              ? "链接已连通；这一代沿用此出口"
-              : "链接已获配出口；这段记录未见首次连通"
-            : !switched && reserved && !released
-              ? "IP 已预留给该链接，等待客户端首次连接"
-              : "";
-  const cardIP = switched?.ip || summary.ip || supplierLatest?.ip;
+function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
+  const [open, setOpen] = useState(false);
+  const [title, body, tone] = describe(e);
+  const worker = e.worker;
+  const context = e.context;
+  const future =
+    context?.session && context.old_session && context.session !== e.session
+      ? context.session
+      : "";
+  const origin = e.old_ip && e.old_ip !== e.ip ? e.old_ip : "";
   return (
-    <article className={`trace-card ${chain.status ? "trace-current" : ""}`}>
-      <header className="trace-card-head">
-        <div className="trace-card-ident">
-          <span
-            className={`trace-status ${chain.status ? "on" : ""} ${chain.status === "REVIEW" || chain.status === "UNAVAILABLE" ? "warning" : ""}`}
-            key={state}
+    <li className={`journey-row tone-${tone}`}>
+      <div className="journey-time">
+        <time>{date(e.at)}</time>
+        <span>事件 {number}</span>
+      </div>
+      <div className="journey-marker" aria-hidden="true">
+        {tone === "good" ? <Check size={13} /> : <CircleDot size={13} />}
+      </div>
+      <article className="journey-card">
+        <header>
+          <strong>{title}</strong>
+          <GroupLabel id={e.group_id} showId={false} />
+          <button
+            type="button"
+            className="journey-details-button"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
           >
-            <i />
-            {state}
+            {open ? "收起" : "详情"}
+          </button>
+        </header>
+        <p>{body}</p>
+        <div className="journey-context">
+          {origin && (
+            <>
+              <IP ip={origin} country={e.old_country} />
+              <ArrowRight size={13} />
+            </>
+          )}
+          <IP ip={e.ip} country={e.country} slot={e.slot_id} />
+          {e.new_ip && (
+            <>
+              <ArrowRight size={13} />
+              <IP ip={e.new_ip} country={e.new_country} slot={e.slot_id} />
+            </>
+          )}
+          <span className="journey-chip">
+            工位 <code>{worker ?? "未绑定"}</code>
           </span>
-          <b>
-            {summary.worker
-              ? `工位 ${summary.worker}`
-              : summary.binding_id
-                ? "匿名会话"
-                : "资源链路"}
-          </b>
-          <GroupLabel id={summary.group_id} showId={false} />
-          {!!summary.generation && (
-            <span className="muted">第 {summary.generation} 代</span>
-          )}
-          {summary.session && (
-            <code title={summary.session}>{summary.session}</code>
-          )}
-        </div>
-        <div className="trace-card-tools">
-          <time title={date(latest.at)}>{date(latest.at)}</time>
-          <span title="记录跨度：首条事件到末条事件或当前时间">
-            <Clock3 size={13} />
-            {laneElapsed(events, businessActive || supplierActive, now)}
+          <span className="journey-chip">
+            session <code>{e.session ?? "未绑定"}</code>
           </span>
-          {Math.max(supplier.length, business.length) > 2 && (
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-expanded={expanded}
-              onClick={() => setExpanded(!expanded)}
-            >
-              {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-              {expanded ? "收起" : "展开"}
-            </Button>
-          )}
-        </div>
-      </header>
-      <div className="trace-outcome">
-        {business.length > 0 && (
-          <div className="trace-outcome-row">
-            <span className="trace-outcome-label">
-              <GitBranch size={13} />
-              链接
+          {future && (
+            <span className="journey-chip">
+              换号后交给 <code>{future}</code>
             </span>
-            {switched?.old_session &&
-              switched.old_session !== switched.session && (
+          )}
+        </div>
+        {open && (
+          <div className="journey-expanded">
+            <dl>
+              <dt>触发来源</dt>
+              <dd>{e.source ?? e.cause ?? "系统记录"}</dd>
+              {e.reason && (
                 <>
-                  <code title="旧 session">{switched.old_session}</code>
-                  <ArrowRight size={12} />
-                  <code title="新 session">{switched.session}</code>
-                  <span className="trace-outcome-divider" />
+                  <dt>原始原因</dt>
+                  <dd>{e.reason}</dd>
                 </>
               )}
-            {switched?.old_ip && switched.old_ip !== cardIP && (
-              <>
-                <IPValue ip={switched.old_ip} slot={switched.old_slot_id} />
-                <ArrowRight size={13} />
-              </>
-            )}
-            {cardIP && (
-              <IPValue
-                ip={cardIP}
-                slot={switched?.slot_id ?? summary.slot_id}
-              />
-            )}
-            {switched?.source && (
-              <span>{sources[switched.source] ?? switched.source}</span>
-            )}
-            {businessNote && <span>{businessNote}</span>}
-            {summary.binding_id && (
-              <a
-                className="trace-text-link"
-                href={traceLink({
-                  view: "links",
-                  ...(summary.worker
-                    ? { worker: summary.worker, group_id: summary.group_id }
-                    : { binding_id: summary.binding_id }),
-                })}
-              >
-                看工位历次变化
-              </a>
-            )}
+              {e.supplier_id && (
+                <>
+                  <dt>Webshare 单号</dt>
+                  <dd>{e.supplier_id}</dd>
+                </>
+              )}
+              {e.job_id && (
+                <>
+                  <dt>替换任务</dt>
+                  <dd>
+                    <code>{e.job_id}</code>
+                  </dd>
+                </>
+              )}
+              {e.generation != null && (
+                <>
+                  <dt>代次</dt>
+                  <dd>{e.generation}</dd>
+                </>
+              )}
+              {e.selection && (
+                <>
+                  <dt>补货条件</dt>
+                  <dd>
+                    {e.selection.type === "country"
+                      ? `国家 ${e.selection.country_code}`
+                      : e.selection.type === "asn"
+                        ? `ASN ${e.selection.asn_numbers?.join("、")}`
+                        : e.selection.type === "ip_range"
+                          ? e.selection.ip_ranges?.join("、")
+                          : "随机"}
+                  </dd>
+                </>
+              )}
+              {e.fallback_reason && (
+                <>
+                  <dt>兜底原因</dt>
+                  <dd>{e.fallback_reason}</dd>
+                </>
+              )}
+            </dl>
+            <div className="journey-links">
+              {worker && (
+                <a
+                  href={href({
+                    view: "links",
+                    worker,
+                    group_id: e.group_id ?? "",
+                  })}
+                >
+                  看这个工位的完整过程
+                </a>
+              )}
+              {e.job_id && (
+                <a href={href({ view: "ips", job_id: e.job_id })}>
+                  只看这项 Webshare 任务
+                </a>
+              )}
+              {e.binding_id && (
+                <a href={href({ view: "links", binding_id: e.binding_id })}>
+                  只看这次绑定
+                </a>
+              )}
+            </div>
           </div>
         )}
-        {supplier.length > 0 && (
-          <div className="trace-outcome-row trace-outcome-supplier">
-            <span className="trace-outcome-label">
-              <Layers3 size={13} />
-              资源
-            </span>
-            {supplierChange ? (
-              <>
-                <IPValue
-                  ip={supplierChange.ip!}
-                  slot={supplierChange.slot_id}
-                />
-                <ArrowRight size={13} />
-                <IPValue
-                  ip={supplierChange.new_ip!}
-                  slot={supplierChange.slot_id}
-                />
-                <span>Webshare 已更换</span>
-              </>
-            ) : (
-              <>
-                {(supplierLatest?.ip || supplier[0].ip) && (
-                  <IPValue
-                    ip={(supplierLatest?.ip || supplier[0].ip)!}
-                    slot={supplierLatest?.slot_id ?? supplier[0].slot_id}
-                  />
-                )}
-                <span>{title(supplierLatest ?? supplier[0])}</span>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      {business.length > 0 && (
-        <Lane
-          name="链接事件"
-          items={business}
-          expanded={expanded}
-          onPick={onPick}
-          running={businessActive}
-          now={now}
-        />
-      )}
-      {supplier.length > 0 && (
-        <Lane
-          name="资源事件"
-          items={supplier}
-          supplier
-          expanded={expanded}
-          onPick={onPick}
-          running={supplierActive}
-          now={now}
-        />
-      )}
-    </article>
+      </article>
+    </li>
   );
 }
-
 export function Lifecycle() {
-  const initial = new URLSearchParams(location.hash.split("?")[1]);
-  const view = initial.get("view") === "ips" ? "ips" : "links";
-  const group = initial.get("group_id") ?? "",
-    binding = initial.get("binding_id") ?? "";
-  const slot = initial.get("slot_id") ?? "",
-    job = initial.get("job_id") ?? "",
-    q = initial.get("q") ?? "";
+  const params = new URLSearchParams(location.hash.split("?")[1]);
+  const view = params.get("view") === "ips" ? "ips" : "links";
+  const group = params.get("group_id") ?? "",
+    binding = params.get("binding_id") ?? "";
+  const worker = params.get("worker") ?? "",
+    q = params.get("q") ?? "",
+    slot = params.get("slot_id") ?? "",
+    job = params.get("job_id") ?? "";
   const [draft, setDraft] = useState(q),
     [page, setPage] = useState(1);
-  const [picked, setPicked] = useState<Entry | null>(null);
-  const [now, setNow] = useState(() => Date.now() / 1000);
+  const [order, setOrder] = useState<"asc" | "desc">(
+    q || binding || worker || slot || job ? "asc" : "desc",
+  );
+  const size = 25;
   const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
-  const size = 12;
-  const worker = initial.get("worker") ?? "";
-  const focusedIP =
-    view === "ips" &&
-    (/^\d{1,3}(\.\d{1,3}){3}$/.test(q) ||
-      (q.includes(":") && /^[0-9a-f:]+$/i.test(q)))
-      ? q
-      : "";
-  const query = useQuery<
-    Paged<Chain> & {
-      paths?: IPPath[];
-      focus?: Pick<
-        BindingData,
-        "worker" | "group_id" | "session" | "ip" | "generation" | "status"
-      > | null;
-    }
-  >(
+  const query = useQuery<Result>(
     "/lifecycle/chains?" +
       queryString({
+        event_view: true,
         view,
         group_id: group,
         binding_id: binding,
         worker,
+        q,
         slot_id: slot,
         job_id: job,
-        q,
         page,
         page_size: size,
+        order,
       }),
     true,
     3000,
   );
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!document.hidden) setNow(Date.now() / 1000);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const focus = query.data?.focus;
-  function search(event: FormEvent) {
-    event.preventDefault();
+  function search(e: FormEvent) {
+    e.preventDefault();
     const value = draft.trim();
-    const ip =
-      /^\d{1,3}(\.\d{1,3}){3}$/.test(value) ||
-      (value.includes(":") && /^[0-9a-f:]+$/i.test(value));
-    location.hash = traceLink({
-      view: ip ? "ips" : view,
+    location.hash = href({
+      view: /^\d{1,3}(\.\d{1,3}){3}$/.test(value) ? "ips" : view,
       group_id: group,
       q: value,
     });
   }
+  const paths = query.data?.paths ?? [],
+    focus = query.data?.focus;
   return (
-    <section className="trace-page">
+    <section className="journey-page">
       <div className="surface trace-toolbar">
-        <nav aria-label="追踪范围">
+        <nav aria-label="追踪对象">
           <Button
             asChild
             size="sm"
             variant={view === "links" ? "default" : "secondary"}
           >
-            <a
-              href={traceLink({ view: "links", group_id: group })}
-              aria-current={view === "links" ? "page" : undefined}
-            >
+            <a href={href({ view: "links", group_id: group })}>
               <GitBranch size={14} />
-              链接变化
+              链接使用过程
             </a>
           </Button>
           <Button
@@ -747,12 +525,9 @@ export function Lifecycle() {
             size="sm"
             variant={view === "ips" ? "default" : "secondary"}
           >
-            <a
-              href={traceLink({ view: "ips", group_id: group })}
-              aria-current={view === "ips" ? "page" : undefined}
-            >
+            <a href={href({ view: "ips", group_id: group })}>
               <Layers3 size={14} />
-              IP 变化
+              IP 使用与更换
             </a>
           </Button>
         </nav>
@@ -761,110 +536,145 @@ export function Lifecycle() {
             aria-label="追踪分组"
             value={group}
             onChange={(e) => {
-              location.hash = traceLink({ view, group_id: e.target.value, q });
+              location.hash = href({ view, group_id: e.target.value, q });
             }}
           >
             <option value="">全部分组</option>
             {groups.data?.items.map((g) => (
-              <option key={g.id} value={g.id}>
+              <option value={g.id} key={g.id}>
                 {g.name}
               </option>
             ))}
           </select>
           <input
-            aria-label="搜索工位、session、IP 或任务"
-            placeholder="工位 / session / IP / 任务"
+            aria-label="搜索 IP、工位或 session"
+            placeholder="输入 IP、工位或 session"
             value={draft}
-            maxLength={128}
             onChange={(e) => setDraft(e.target.value)}
+            maxLength={128}
           />
           <Button size="sm" variant="secondary" type="submit" aria-label="查询">
             <Search size={14} />
           </Button>
         </form>
-        <span
-          className={`trace-live ${query.error ? "offline" : ""}`}
-          title="每 3 秒自动刷新；最新链路在前"
-        >
-          <Radio size={14} />
-          {query.error ? "更新中断" : "实时更新"}
+        <span className="trace-live">
+          <Radio size={13} />
+          {query.error ? "更新暂停" : "实时更新"}
         </span>
       </div>
-      <div className="trace-index">
-        <span>
-          <ArrowLeft size={13} />
-          最新记录在左 · 箭头从旧事件指向新事件
-        </span>
-        {(binding || worker || slot || job || q) && (
-          <a href={traceLink({ view, group_id: group })}>清除筛选</a>
-        )}
-        {page > 1 && (
-          <Button size="sm" variant="secondary" onClick={() => setPage(1)}>
-            回到最新
-          </Button>
-        )}
-      </div>
-      {view === "ips" && (focusedIP || slot) && query.data && (
-        <IPPaths
-          paths={query.data.paths ?? []}
-          focusedIP={focusedIP}
-          slot={slot}
-        />
-      )}
-      {view === "links" && focus && (
-        <aside className="surface trace-focus">
+      {(q || slot || binding || worker || job) && (
+        <aside className="surface journey-focus">
           <header>
-            <GitBranch size={15} />
+            <Layers3 size={15} />
             <strong>
-              {focus.worker ? `工位 ${focus.worker}` : "匿名会话"} ·
-              历次链接变化
+              {q
+                ? `IP / 关键词：${q}`
+                : worker
+                  ? `工位 ${worker} 的使用过程`
+                  : binding
+                    ? "这次链接绑定的完整过程"
+                    : job
+                      ? "这项 Webshare 更换任务"
+                      : "该 IP 席位的完整过程"}
             </strong>
-            <GroupLabel id={focus.group_id} showId={false} />
+            <a href={href({ view, group_id: group })}>清除筛选</a>
           </header>
-          <div className="trace-focus-current">
-            <b>
-              {focus.status === "RELEASED"
-                ? "绑定已解除"
-                : focus.status === "RESERVED"
-                  ? "当前预留"
-                  : "当前绑定"}
-            </b>
-            <code>{focus.session}</code>
-            {focus.ip && (
-              <>
-                <span>出口</span>
-                <IPValue ip={focus.ip} />
-              </>
-            )}
-            <span>第 {focus.generation} 代</span>
-          </div>
+          {focus && (
+            <p>
+              当前{focus.status === "RELEASED" ? "已释放" : "绑定"} · session{" "}
+              <code>{focus.session}</code>
+              {focus.ip && (
+                <>
+                  {" "}
+                  · 出口 <IP ip={focus.ip} country={focus.exit_country} />
+                </>
+              )}
+            </p>
+          )}
+          {paths.map((p) => (
+            <div className="journey-focus-path" key={p.slot_id}>
+              <b>当前资源</b>
+              {p.current ? (
+                <>
+                  <IP
+                    ip={p.current.ip}
+                    country={p.current.country}
+                    slot={p.slot_id}
+                  />
+                  <span>{stateNames[p.current.state] ?? p.current.state}</span>
+                </>
+              ) : (
+                <span>原 IP 已退役，未确认当前资源</span>
+              )}
+              {!!p.changes.length && (
+                <details>
+                  <summary>
+                    已确认的 Webshare 换号（{p.changes.length} 次）
+                  </summary>
+                  <ul>
+                    {p.changes.map((c) => (
+                      <li key={c.at}>
+                        <time>{date(c.at)}</time>
+                        <code>{c.ip}</code>
+                        <ArrowRight size={12} />
+                        <code>{c.new_ip}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          ))}
+          <small>
+            下面按实际记录讲述发生的事；新出口获配和旧 IP
+            补货会分别说明。没有记录的信息显示“未记录”，不会补造。
+          </small>
         </aside>
       )}
+      <div className="journey-controls">
+        <span>
+          <Clock3 size={13} />
+          {query.data?.total ?? "—"} 个事件
+        </span>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            setOrder(order === "asc" ? "desc" : "asc");
+            setPage(1);
+          }}
+        >
+          {order === "asc" ? <ArrowDown size={13} /> : <ArrowUp size={13} />}{" "}
+          {order === "asc" ? "从头看 · 按发生顺序" : "看最新 · 新事件在上"}
+        </Button>
+      </div>
       <ErrorMessage message={query.error} />
-      {query.isLoading && <LoadingState label="正在读取轨迹…" />}
-      {query.data?.items.length === 0 && (
-        <p className="surface ops-empty">暂无符合条件的轨迹。</p>
+      {query.isLoading && <LoadingState label="正在还原使用过程…" />}
+      {!query.isLoading && query.data?.items.length === 0 && (
+        <p className="surface ops-empty">还没有符合条件的事件。</p>
       )}
-      <div className="trace-deck">
-        {query.data?.items.map((chain) => (
-          <TraceCard
-            key={chain.id}
-            chain={chain}
-            onPick={setPicked}
-            now={now}
+      <ol className="journey-timeline">
+        {query.data?.items.map((e, i) => (
+          <EventRow
+            key={e.id}
+            entry={e}
+            number={
+              order === "asc"
+                ? (page - 1) * size + i + 1
+                : (query.data?.total ?? 0) - (page - 1) * size - i
+            }
           />
         ))}
-      </div>
+      </ol>
       <div className="ops-pager">
-        <span>共 {query.data?.total ?? "—"} 条链路</span>
+        <span>每页 {size} 个事件</span>
         <Button
           size="sm"
           variant="secondary"
           disabled={page === 1}
           onClick={() => setPage(page - 1)}
-          aria-label="上一页"
         >
-          <ChevronLeft size={14} />
+          上一页
         </Button>
         <span>
           {page} / {Math.max(1, Math.ceil((query.data?.total ?? 0) / size))}
@@ -874,160 +684,10 @@ export function Lifecycle() {
           variant="secondary"
           disabled={!query.data || page * size >= query.data.total}
           onClick={() => setPage(page + 1)}
-          aria-label="下一页"
         >
-          <ChevronRight size={14} />
+          下一页
         </Button>
       </div>
-      {picked && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setPicked(null);
-          }}
-          title={title(picked)}
-          description={date(picked.at)}
-        >
-          <dl className="trace-details">
-            <dt>资源组</dt>
-            <dd>
-              <GroupLabel id={picked.group_id} />
-            </dd>
-            {picked.status && (
-              <>
-                <dt>状态</dt>
-                <dd>
-                  {statuses[picked.status] ?? <Status state={picked.status} />}
-                </dd>
-              </>
-            )}
-            {picked.worker && (
-              <>
-                <dt>工位</dt>
-                <dd>{picked.worker}</dd>
-              </>
-            )}
-            {picked.session && (
-              <>
-                <dt>Session</dt>
-                <dd>
-                  <code>
-                    {picked.old_session && picked.old_session !== picked.session
-                      ? picked.old_session + " → "
-                      : ""}
-                    {picked.session}
-                  </code>
-                </dd>
-              </>
-            )}
-            {!!picked.generation && (
-              <>
-                <dt>代次</dt>
-                <dd>{picked.generation}</dd>
-              </>
-            )}
-            {picked.ip && (
-              <>
-                <dt>出口</dt>
-                <dd>
-                  <code>
-                    {[picked.old_ip, picked.ip, picked.new_ip]
-                      .filter(Boolean)
-                      .join(" → ")}
-                  </code>
-                </dd>
-              </>
-            )}
-            {picked.source && (
-              <>
-                <dt>触发</dt>
-                <dd>{sources[picked.source] ?? picked.source}</dd>
-              </>
-            )}
-            {picked.reason && (
-              <>
-                <dt>说明</dt>
-                <dd>{picked.reason}</dd>
-              </>
-            )}
-            {picked.selection && (
-              <>
-                <dt>补货规则</dt>
-                <dd>
-                  {picked.fallback_reason && picked.preferred_selection
-                    ? `${selectionLabel(picked.preferred_selection)} → `
-                    : ""}
-                  {selectionLabel(picked.selection)}
-                </dd>
-              </>
-            )}
-            {picked.supplier_id && (
-              <>
-                <dt>Webshare 单号</dt>
-                <dd>
-                  <code>{picked.supplier_id}</code>
-                  {picked.attempt ? ` · 第 ${picked.attempt} 次提交` : ""}
-                </dd>
-              </>
-            )}
-            {picked.previous_supplier_id && (
-              <>
-                <dt>原单号</dt>
-                <dd>
-                  <code>{picked.previous_supplier_id}</code>
-                </dd>
-              </>
-            )}
-            {(picked.historical || picked.baseline) && (
-              <>
-                <dt>记录来源</dt>
-                <dd>旧版历史可能不完整</dd>
-              </>
-            )}
-          </dl>
-          <div className="trace-detail-links">
-            {picked.binding_id && (
-              <a
-                href={traceLink({
-                  view: "links",
-                  binding_id: picked.binding_id,
-                })}
-                onClick={() => setPicked(null)}
-              >
-                查看此绑定的各代出口
-              </a>
-            )}
-            {picked.slot_id && (
-              <a
-                href={
-                  picked.ip
-                    ? ipHref(picked.ip, picked.slot_id)
-                    : traceLink({ view: "ips", slot_id: picked.slot_id })
-                }
-                onClick={() => setPicked(null)}
-              >
-                追踪此 IP 的前后变化
-              </a>
-            )}
-            {picked.old_slot_id && picked.old_slot_id !== picked.slot_id && (
-              <a
-                href={traceLink({ view: "ips", slot_id: picked.old_slot_id })}
-                onClick={() => setPicked(null)}
-              >
-                旧出口席位
-              </a>
-            )}
-            {picked.job_id && (
-              <a
-                href={traceLink({ view: "ips", job_id: picked.job_id })}
-                onClick={() => setPicked(null)}
-              >
-                替换任务
-              </a>
-            )}
-          </div>
-        </Dialog>
-      )}
     </section>
   );
 }

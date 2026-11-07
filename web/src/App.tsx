@@ -1734,7 +1734,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.11</span>
+            <span className="version-tag">v0.2.12</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">
@@ -1966,8 +1966,8 @@ export default function App() {
                 {action === "release"
                   ? target?.status === "RESERVED"
                     ? "取消后旧链接失效，原 IP 返回待分配池，不调用供应商更换 API。若已被使用会拒绝取消，请刷新。"
-                    : "释放后当前 session 失效，业务需创建新 session。"
-                  : "换号后新连接使用新出口。已有 TCP 不会迁移，强制切换后由客户端重连。"}
+                    : "释放后当前 session 失效。原 IP 保留，等旧连接结束后返回待分配池，不调用 Webshare，也不消耗换号额度。"
+                  : "先从待分配池选择新出口；使用过的旧 IP 随后退役并调用 Webshare 补货，可能消耗换号额度。已有 TCP 不会迁移，强制切换后由客户端重连。"}
               </p>
             </div>
             {operationError && (

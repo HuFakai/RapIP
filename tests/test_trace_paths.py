@@ -53,7 +53,7 @@ async def test_release_trace_distinguishes_unused_reservation(client, gateway, u
     response = await client.get("/api/v1/lifecycle/chains", params=query, headers=AUTH)
     release = next(e for c in response.json()["items"] for e in c["events"] if e["kind"] == "released")
     assert release["release_action"] == ("unused_reservation" if unused else "used_exit")
-    assert bool(gateway.replacements) == (not unused)
+    assert not gateway.replacements
 
 
 async def test_worker_path_follows_new_binding_after_release(client, gateway):

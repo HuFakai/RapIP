@@ -16,3 +16,6 @@ playwright-report
 
 config/quality_sources.json
 examples/
+
+proxy-lab/
+proxy-lab.zip

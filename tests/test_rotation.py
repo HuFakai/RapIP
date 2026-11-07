@@ -385,7 +385,10 @@ async def test_explicit_spare_limit_applies_alongside_binding_cap(gateway):
 
 async def test_legacy_unsubmitted_idle_replacement_is_paused_on_migration(gateway):
     binding, node, _ = await gateway.acquire(route())
-    await gateway.release(binding.id)
+    async with gateway.changed:
+        gateway._release(binding, "hard")
+        gateway._retire(node, "绑定释放")
+        await gateway._persist()
     snapshot = await gateway.storage.load()
     snapshot["schema"] = 2
     directory = gateway.config.data_dir.parent / "legacy-upgrade"

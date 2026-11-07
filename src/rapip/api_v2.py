@@ -34,6 +34,7 @@ class WorkerRule(Model):
 
 class ReportMethods(Model):
     ipquality: bool | None = None
+    ping0: bool | None = None
 
 
 class GroupCreate(Model):
@@ -228,6 +229,8 @@ def register(app, gateway, auth, operate):
         worker: str = Query("", max_length=64),
         page: int = Query(1, ge=1, le=100000),
         page_size: int = Query(12, ge=1, le=50),
+        event_view: bool = False,
+        order: Literal["asc", "desc"] = "desc",
     ):
         cutoff = time.time() - g.observer.retention.event_days * 86400
         ip = ""
@@ -252,7 +255,12 @@ def register(app, gateway, auth, operate):
                 node = g.nodes.get(g.quality.slots.get(sid, {}).get("node_id"))
                 current = None
                 if node and node.state != IPState.ARCHIVED:
-                    current = {"ip": node.ip, "state": node.state, "group_id": node.group_id}
+                    current = {
+                        "ip": node.ip,
+                        "state": node.state,
+                        "group_id": node.group_id,
+                        "country": node.country,
+                    }
                 paths.append({"slot_id": sid, "current": current, "changes": by_slot.get(sid, [])})
         rows, total = await g.storage.chains(
             view,
@@ -269,6 +277,8 @@ def register(app, gateway, auth, operate):
             (page - 1) * page_size,
             page_size,
             cutoff,
+            timeline=event_view,
+            ascending=order == "asc",
         )
         current = {
             g.lifecycle.key(b.id, b.generation): (
@@ -295,12 +305,47 @@ def register(app, gateway, auth, operate):
             focus = {
                 key: data[key] for key in ("worker", "group_id", "session", "ip", "generation", "status")
             }
+        if focus and focused_binding:
+            node = g.nodes.get(focused_binding.node_id)
+            focus["exit_country"] = node.country if node else ""
+        if event_view:
+            for e in rows:
+                node = g.nodes.get(e.get("node_id"))
+                if not node or node.ip != e.get("ip"):
+                    node = next(
+                        (
+                            n
+                            for n in g.nodes.values()
+                            if n.ip == e.get("ip")
+                            and (not e.get("account_id") or n.account_id == e["account_id"])
+                        ),
+                        None,
+                    )
+                e.setdefault("country", node.country if node else "")
+                if e.get("new_ip") and not e.get("new_country"):
+                    fresh = next(
+                        (
+                            n
+                            for n in g.nodes.values()
+                            if n.ip == e["new_ip"]
+                            and (not e.get("account_id") or n.account_id == e["account_id"])
+                        ),
+                        None,
+                    )
+                    e["new_country"] = fresh.country if fresh else ""
+                context = e.get("context") or {}
+                if e["kind"] in {"webshare", "draining"} and context.get("old_ip") == e.get("ip"):
+                    e["session"] = context.get("old_session") or e.get("session")
+                    e["worker"] = context.get("worker") or e.get("worker")
+        items = (
+            rows
+            if event_view
+            else [{"id": key, "status": current.get(key), "events": entries} for key, entries in rows.items()]
+        )
         return {
             "paths": paths,
             "focus": focus,
-            "items": [
-                {"id": key, "status": current.get(key), "events": entries} for key, entries in rows.items()
-            ],
+            "items": items,
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -560,6 +605,23 @@ def register(app, gateway, auth, operate):
     @app.post(prefix + "/nodes/{node_id}/ip-quality", dependencies=deps)
     async def run_ipquality(node_id: str, request: Request):
         return await operate(request, "ipquality_report", {}, lambda: g.ipquality.run(node_id))
+
+    @app.get(prefix + "/nodes/{node_id}/ping0", dependencies=deps)
+    async def ping0_report(node_id: str):
+        node = g.nodes.get(node_id)
+        if not node:
+            raise GatewayError("NOT_FOUND", "资源不存在", 404)
+        return {
+            "report": await g.ping0.latest(node),
+            "enabled": g.report_methods["ping0"],
+            "running": g.ping0.running == node_id,
+            "busy": g.ping0.running is not None,
+            "next_at": g.ping0.next_at,
+        }
+
+    @app.post(prefix + "/nodes/{node_id}/ping0", dependencies=deps)
+    async def run_ping0(node_id: str, request: Request):
+        return await operate(request, "ping0_report", {}, lambda: g.ping0.run(node_id))
 
     @app.get(prefix + "/overview", dependencies=deps)
     async def overview(

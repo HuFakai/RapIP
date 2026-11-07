@@ -17,6 +17,7 @@ from .ipquality import IPQualityReports
 from .lifecycle import Lifecycle
 from .models import Binding, GatewayError, IPState, Node, Operation, Replacement, Route, uid
 from .observability import Observability
+from .ping0 import Ping0Reports
 from .provider import ProviderError, Webshare
 from .quality import QualityManager
 from .quotas import public_usage
@@ -43,6 +44,7 @@ class Gateway:
         self.storage = Storage(config.data_dir)
         self.lifecycle = Lifecycle(self)
         self.replenishment = {}
+        self.returning = {}
         self.lock = asyncio.Lock()
         self.changed = asyncio.Condition(self.lock)
         self.account_locks: dict[str, asyncio.Lock] = {}
@@ -73,11 +75,12 @@ class Gateway:
         self.bytes_up = self.bytes_down = 0
         self.observer = Observability(config.data_dir)
         self.ipquality = IPQualityReports(self)
+        self.ping0 = Ping0Reports(self)
         self.quality = QualityManager(self)
         self.rotation = RotationManager(self)
         self.dynamic = DynamicSwitch(self)
         self.workers = Workers(self)
-        self.report_methods = {"ipquality": True}
+        self.report_methods = {"ipquality": True, "ping0": False}
 
     async def start(self, background: bool = True, sync: bool = True):
         self.config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -121,10 +124,12 @@ class Gateway:
         self.dynamic.load(state.get("dynamic", {}))
         self.workers.load(state.get("workers", {}))
         self.replenishment = state.get("replenishment", {})
+        self.returning = state.get("returning", {})
         self.lifecycle.related = state.get("lifecycle_related", {})
         self.lifecycle.keys = state.get("lifecycle_keys", {})
         self.lifecycle.load(state.get("lifecycle_initialized", False))
         self.report_methods["ipquality"] = state.get("report_methods", {}).get("ipquality", True)
+        self.report_methods["ping0"] = state.get("report_methods", {}).get("ping0", False)
         self.settings.auto_failover = False  # v0.2.5: opt in per group, never inherit legacy global True
         await self.observer.open()
         self.client = aiohttp.ClientSession(
@@ -155,7 +160,10 @@ class Gateway:
                     job.state, job.error = "UNCERTAIN", "提交结果不明；需对账，禁止自动重复提交"
             for node in self.nodes.values():
                 if node.state == IPState.DRAINING:
-                    self._retire(node, "重启后旧代次已排空")
+                    if node.id in self.returning:
+                        self._return_node(node)
+                    else:
+                        self._retire(node, "重启后旧代次已排空")
             for binding in self.bindings.values():
                 if not binding.released:
                     binding.last_detached = time.time()
@@ -241,6 +249,7 @@ class Gateway:
             "lifecycle_keys": self.lifecycle.keys,
             "lifecycle_initialized": self.lifecycle.initialized,
             "replenishment": self.replenishment,
+            "returning": self.returning,
             "workers": self.workers.snapshot(),
             "report_methods": self.report_methods,
             "rotation": self.rotation.snapshot(),
@@ -516,7 +525,38 @@ class Gateway:
             raise GatewayError("DRAIN_BUSY", "上一代连接仍在排空，请等待或选择强制切换")
         if session != binding.session and self.retired.get(f"{binding.slot}:{session}", 0) > time.time():
             raise GatewayError("SESSION_RETIRED", "新 session 已失效，请生成其他 ID")
-        node = await self._wait_node(country, False, binding.group_id)
+        requested = uid()
+        request_chain = f"request:{requested}"
+        old_at_request = self.nodes.get(binding.node_id)
+        self.lifecycle.add(
+            "session_requested" if session != binding.session else "rotation_requested",
+            node=old_at_request,
+            binding=binding,
+            old_session=binding.session,
+            session=session,
+            old_ip=old_at_request.ip if old_at_request else None,
+            generation=binding.generation + 1,
+            chain_id=request_chain,
+            source=source,
+            status="WAITING",
+            country=old_at_request.country if old_at_request else "",
+        )
+        await self._persist()
+        try:
+            node = await self._wait_node(country, False, binding.group_id)
+        except (GatewayError, TimeoutError) as error:
+            self.lifecycle.add(
+                "request_failed",
+                node=old_at_request,
+                binding=binding,
+                session=session,
+                chain_id=request_chain,
+                reason=str(error),
+                source=source,
+                status="FAILED",
+            )
+            await self._persist()
+            raise
         self.dynamic.reject_control(binding)
         if binding.released or binding.generation != generation_before_wait:
             raise GatewayError("VERSION_CONFLICT", "等待期间绑定已变化，请重试")
@@ -550,6 +590,7 @@ class Gateway:
             binding.generation,
         )
         node.reason = "会话独占"
+        self.lifecycle.keys[f"{binding.id}:{binding.generation}"] = request_chain
         if old:
             self.lifecycle.follow(old, binding)
         retire = draining + ([old] if old else [])
@@ -577,6 +618,7 @@ class Gateway:
             old_ip=old.ip if old else None,
             old_slot_id=old.slot_id if old else None,
             old_session=old_session,
+            old_country=old.country if old else "",
             source=source,
             status=mode,
         )
@@ -665,7 +707,12 @@ class Gateway:
             else "other"
         )
         self.lifecycle.add(
-            "released", binding=binding, node=node, reason=reason, release_action=release_action
+            "released",
+            binding=binding,
+            node=node,
+            reason=reason,
+            release_action=release_action,
+            resource_action="return_after_drain",
         )
         binding.released = True
         binding.released_at, binding.release_reason = time.time(), reason
@@ -683,11 +730,15 @@ class Gateway:
                 node.state = IPState.FRESH if self.quality.eligible(node) else IPState.QUARANTINED
                 node.reason = "未使用预留已取消，不消耗更换额度"
             if node.binding_id == binding.id and node.state in {IPState.IN_USE, IPState.DRAINING}:
-                self.blacklist[node.ip] = time.time() + self.settings.blacklist_ttl
+                self.returning[node.id] = binding.id
+                for record in self.rotation.pending():
+                    if record["node_id"] == node.id:
+                        record["state"] = "CANCELLED"
                 if mode == "graceful" and self._count_node(node.id):
                     node.state, node.drain_until = IPState.DRAINING, time.time() + self.settings.drain_timeout
                 else:
-                    self._retire(node, "绑定释放")
+                    self._close_node(node.id)
+                    self._return_node(node)
         self.event(
             "release",
             reason,
@@ -696,6 +747,20 @@ class Gateway:
             session=binding.session,
             source="manual",
         )
+
+    def _return_node(self, node):
+        """Release ownership without retiring the supplier resource or charging replacements."""
+        self.lifecycle.add(
+            "returned",
+            node=node,
+            binding=self.bindings.get(node.binding_id),
+            reason="链接绑定已解除；原 IP 未更换，重新按本组准入参与分配",
+        )
+        node.used, node.binding_id, node.drain_until = False, None, None
+        self.returning.pop(node.id, None)
+        self.blacklist.pop(node.ip, None)
+        node.state = IPState.FRESH if self.quality.eligible(node) else IPState.QUARANTINED
+        node.reason = "释放后返回待分配池" if node.state == IPState.FRESH else "释放后保留原 IP，等待重新准入"
 
     async def reserve_dial(self, binding):
         async with self.lock:
@@ -792,7 +857,10 @@ class Gateway:
             binding, node = self.bindings[tunnel["binding_id"]], self.nodes[tunnel["node_id"]]
             binding.last_detached = time.time()
             if node.state == IPState.DRAINING and not self._count_node(node.id):
-                self._retire(node, "旧连接排空完成")
+                if node.id in self.returning:
+                    self._return_node(node)
+                else:
+                    self._retire(node, "旧连接排空完成")
                 if not self.storage_failed:
                     await self._persist()
             self.changed.notify_all()
@@ -1103,8 +1171,11 @@ class Gateway:
                 if node.state == IPState.DRAINING and (
                     not self._count_node(node.id) or now >= node.drain_until
                 ):
-                    self._retire(node, "排空完成或到期")
                     self._close_node(node.id)
+                    if node.id in self.returning:
+                        self._return_node(node)
+                    else:
+                        self._retire(node, "排空完成或到期")
             self.blacklist = {ip: expiry for ip, expiry in self.blacklist.items() if expiry > now}
             self.retired_details = {
                 key: data for key, data in self.retired_details.items() if self.retired.get(key, 0) > now
@@ -1730,7 +1801,11 @@ class Gateway:
             for j in self.replacements.values()
         ):
             return "账号仍有替换或待核对任务，请先处理"
-        if ids & (self.probing | self.quality.busy) or self.ipquality.running in ids:
+        if (
+            ids & (self.probing | self.quality.busy)
+            or self.ipquality.running in ids
+            or self.ping0.running in ids
+        ):
             return "账号资源仍在检测，请稍后重试"
         if any(
             n.id in ids and n.state in {IPState.RESERVED, IPState.IN_USE, IPState.DRAINING, IPState.REPLACING}

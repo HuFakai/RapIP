@@ -69,7 +69,10 @@ def evaluate(policy: QualityPolicy, evidence: dict) -> dict:
         if net.get("max_latency_ms") is not None and net["max_latency_ms"] > policy.max_latency_ms:
             failures.append("探测耗时超过上限")
         if net.get("exit_match") is not True:
-            unknown.append("实际出口与资源 IP 不一致或无法确认")
+            if net.get("exits"):
+                unknown.append("检测到实际出口与资源 IP 不一致，暂不分配")
+            else:
+                unknown.append("未取得出口回显，暂时无法确认；不代表 IP 已变更或质量不合格")
         checks.append(
             {
                 "name": "网络检测",
@@ -499,49 +502,79 @@ class QualityManager:
                 self.g.observer.source_status[name] = {"state": "error", "checked_at": time.time(), **value}
                 return value
 
-    async def network_check(self, node, policy):
-        latencies, exits = [], []
-        for _ in range(policy.samples):
-            started, writer = time.monotonic(), None
-            ok = False
-            try:
-                reader, writer, _ = await upstream_connect(
-                    node,
-                    address_bytes("api.ipify.org", 443),
-                    self.g.settings.probe_timeout,
-                    self.g.config.egress_proxy,
-                )
-                import ssl
+    async def echo(self, node, host):
+        writer = None
+        phase = "proxy_connect"
+        started = time.monotonic()
+        try:
+            reader, writer, _ = await upstream_connect(
+                node,
+                address_bytes(host, 443),
+                self.g.settings.probe_timeout,
+                self.g.config.egress_proxy,
+            )
+            import ssl
 
-                async with asyncio.timeout(self.g.settings.probe_timeout):
-                    await writer.start_tls(ssl.create_default_context(), server_hostname="api.ipify.org")
-                    writer.write(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n")
-                    await writer.drain()
-                    response = await reader.read(16384)
-                    while len(response) < 16384 and (part := await reader.read(16384 - len(response))):
-                        response += part
-                    head, body = response.split(b"\r\n\r\n", 1)
-                    if not head.startswith(b"HTTP/1.1 200"):
-                        raise ValueError("echo failed")
-                    # The service returns plain IP text; tolerate HTTP chunking explicitly.
-                    if b"transfer-encoding: chunked" in head.lower():
-                        output = b""
-                        while body:
-                            size, body = body.split(b"\r\n", 1)
-                            n = int(size.split(b";")[0], 16)
-                            if not n:
-                                break
-                            output += body[:n]
-                            body = body[n + 2 :]
-                        body = output
-                    exits.append(str(ipaddress.ip_address(body.strip().decode())))
-                    ok = True
-                    latencies.append((time.monotonic() - started) * 1000)
-            except Exception:
-                pass
-            finally:
-                await close_writer(writer)
-            self.g.observer.probe(node, ok, (time.monotonic() - started) * 1000, "HTTPS api.ipify.org")
+            async with asyncio.timeout(self.g.settings.probe_timeout):
+                phase = "tls"
+                await writer.start_tls(ssl.create_default_context(), server_hostname=host)
+                phase = "echo_response"
+                writer.write(f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+                await writer.drain()
+                response = b""
+                while len(response) < 16384 and (part := await reader.read(16384 - len(response))):
+                    response += part
+                head, body = response.split(b"\r\n\r\n", 1)
+                if not head.startswith((b"HTTP/1.1 200", b"HTTP/1.0 200")):
+                    raise ValueError("echo_status")
+                if b"transfer-encoding: chunked" in head.lower():
+                    output = b""
+                    while body:
+                        size, body = body.split(b"\r\n", 1)
+                        n = int(size.split(b";")[0], 16)
+                        if not n:
+                            break
+                        if len(body) < n + 2:
+                            raise ValueError("incomplete_echo")
+                        output += body[:n]
+                        body = body[n + 2 :]
+                    body = output
+                ip = str(ipaddress.ip_address(body.strip().decode()))
+                return {
+                    "host": host,
+                    "ip": ip,
+                    "ok": True,
+                    "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+                }
+        except Exception as error:
+            return {
+                "host": host,
+                "ok": False,
+                "phase": phase,
+                "error": type(error).__name__,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+            }
+        finally:
+            await close_writer(writer)
+
+    async def network_check(self, node, policy):
+        latencies, exits, attempts = [], [], []
+        for _ in range(policy.samples):
+            started = time.monotonic()
+            result = None
+            for host in ("api.ipify.org", "checkip.amazonaws.com"):
+                result = await self.echo(node, host)
+                attempts.append(result)
+                if result["ok"]:
+                    exits.append(result["ip"])
+                    latencies.append(result["elapsed_ms"])
+                    break
+            self.g.observer.probe(
+                node,
+                bool(result and result["ok"]),
+                (time.monotonic() - started) * 1000,
+                "HTTPS " + (result["host"] if result else "echo"),
+            )
         return {
             "complete": True,
             "successes": len(exits),
@@ -549,6 +582,7 @@ class QualityManager:
             "max_latency_ms": round(max(latencies), 2) if latencies else None,
             "exits": sorted(set(exits)),
             "exit_match": bool(exits) and all(x == node.ip for x in exits),
+            "attempts": attempts,
         }
 
     async def evidence(self, node, policy):
@@ -675,7 +709,16 @@ class QualityManager:
                             else:
                                 self.g._retire(node, "质量拒绝：" + node.reason, cause="quality")
                     if prior != (node.state, self.state(node)) and not dynamic_admission:
-                        self.g.lifecycle.add("admission", node=node, status=node.state, reason=node.reason)
+                        self.g.lifecycle.add(
+                            "admission",
+                            node=node,
+                            status=node.state,
+                            reason=node.reason,
+                            quality_state=verdict["state"],
+                            samples=net.get("samples"),
+                            successes=net.get("successes"),
+                            exits=net.get("exits", []),
+                        )
                 if not preview:
                     self.g.event(
                         "quality",

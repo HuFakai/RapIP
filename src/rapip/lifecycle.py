@@ -22,6 +22,7 @@ class Lifecycle:
         if node:
             item.update(
                 ip=node.ip,
+                country=node.country,
                 node_id=node.id,
                 slot_id=node.slot_id,
                 account_id=node.account_id,
@@ -113,6 +114,15 @@ class Lifecycle:
             supplier_id=job.provider_id,
             previous_supplier_id=job.failed_provider_id,
             new_ip=job.new_ip,
+            new_country=next(
+                (
+                    n.country
+                    for n in self.g.nodes.values()
+                    if n.ip == job.new_ip and n.account_id == job.account_id
+                ),
+                "",
+            ),
+            cause=job.cause,
             selection=job.selection,
             preferred_selection=job.preferred_selection,
             fallback_reason=job.fallback_reason,

@@ -166,7 +166,7 @@ class Storage:
                         changes.append({k: event[k] for k in ("slot_id", "ip", "new_ip", "at", "group_id")})
         return slots, changes
 
-    async def chains(self, view, filters, offset, size, cutoff):
+    async def chains(self, view, filters, offset, size, cutoff, timeline=False, ascending=False):
         # Match filters against individual events, then fetch the entire matched chain.
         where, values = self.history_filter(view, filters, cutoff)
         cte = (
@@ -205,6 +205,54 @@ class Storage:
         )
         """
         )
+        if timeline:
+            direction = "ASC" if ascending else "DESC"
+            async with self.lock:
+                async with self.db.execute(
+                    cte + "SELECT count(*) FROM keyed k JOIN matched m ON k.chain=m.chain",
+                    [cutoff, *values],
+                ) as cur:
+                    total = (await cur.fetchone())[0]
+                async with self.db.execute(
+                    cte
+                    + f"""SELECT k.chain,k.payload FROM keyed k JOIN matched m ON k.chain=m.chain
+                    ORDER BY k.at {direction},k.id {direction} LIMIT ? OFFSET ?""",
+                    [cutoff, *values, size, offset],
+                ) as cur:
+                    entries = [
+                        {**json.loads(payload), "trace_chain": chain}
+                        for chain, payload in await cur.fetchall()
+                    ]
+                context = {}
+                if entries:
+                    async with self.db.execute(
+                        cte
+                        + """SELECT k.chain,k.payload FROM keyed k
+                        WHERE k.chain IN (SELECT value FROM json_each(?))
+                        AND k.kind IN ('switched','session_requested','rotation_requested','in_place_started')
+                        ORDER BY k.at DESC""",
+                        [cutoff, *values, json.dumps(list({e["trace_chain"] for e in entries}))],
+                    ) as cur:
+                        for chain, payload in await cur.fetchall():
+                            context.setdefault(chain, json.loads(payload))
+            for entry in entries:
+                anchor = context.get(entry["trace_chain"])
+                if anchor:
+                    entry["context"] = {
+                        k: anchor.get(k)
+                        for k in (
+                            "ip",
+                            "old_ip",
+                            "session",
+                            "old_session",
+                            "worker",
+                            "group_id",
+                            "source",
+                            "country",
+                            "old_country",
+                        )
+                    }
+            return entries, total
         async with self.lock:
             async with self.db.execute(cte + "SELECT count(*) FROM ranked", [cutoff, *values]) as cur:
                 total = (await cur.fetchone())[0]

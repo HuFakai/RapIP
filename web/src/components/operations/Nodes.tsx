@@ -432,6 +432,13 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                 )}
                 <td>
                   <Status state={n.state} />
+                  {n.state === "QUARANTINED" && (
+                    <small className="node-quality-hint" title={n.reason}>
+                      {n.quality.state === "UNKNOWN"
+                        ? "未确认可用，等待复检"
+                        : n.reason}
+                    </small>
+                  )}
                 </td>
                 {has("quality") && (
                   <td>
@@ -617,6 +624,12 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                 {current.connections} / {current.worker ?? "—"}
               </dd>
             </dl>
+            {current.quality.state === "UNKNOWN" && (
+              <p className="field-help">
+                证据不足表示检测结果尚未确认，不等于质量不合格；不会仅凭这个状态自动更换
+                IP。可查看下方的样本和错误阶段，或执行只读探测。
+              </p>
+            )}
             {current.quality.reasons?.map((r) => (
               <p className="ops-error" key={r}>
                 {r}
