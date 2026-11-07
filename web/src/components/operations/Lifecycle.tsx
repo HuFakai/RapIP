@@ -369,14 +369,16 @@ function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
             </>
           )}
           <span className="journey-chip">
-            工位 <code>{worker ?? "未绑定"}</code>
+            {e.kind === "webshare" ? "原工位" : "工位"}{" "}
+            <code>{worker ?? "未绑定"}</code>
           </span>
           <span className="journey-chip">
-            session <code>{e.session ?? "未绑定"}</code>
+            {e.kind === "webshare" ? "原 session" : "session"}{" "}
+            <code>{e.session ?? "未绑定"}</code>
           </span>
           {future && (
             <span className="journey-chip">
-              换号后交给 <code>{future}</code>
+              关联的新 session <code>{future}</code>
             </span>
           )}
         </div>

@@ -322,6 +322,17 @@ def register(app, gateway, auth, operate):
                         None,
                     )
                 e.setdefault("country", node.country if node else "")
+                if e.get("old_ip") and not e.get("old_country"):
+                    old = next(
+                        (
+                            n
+                            for n in g.nodes.values()
+                            if n.ip == e["old_ip"]
+                            and (not e.get("account_id") or n.account_id == e["account_id"])
+                        ),
+                        None,
+                    )
+                    e["old_country"] = old.country if old else ""
                 if e.get("new_ip") and not e.get("new_country"):
                     fresh = next(
                         (
