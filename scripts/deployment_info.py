@@ -1,5 +1,6 @@
 """Print and privately persist deployment access details after container health succeeds."""
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -15,6 +16,13 @@ def main():
     proxy_user = env.get("RAPIP_SOCKS_USER", "admin")
     admin_password = env["RAPIP_ADMIN_PASSWORD"]
     proxy_password = env["RAPIP_SOCKS_PASSWORD"]
+    saved_path = Path(env.get("RAPIP_CONFIG_DIR", "config")) / "credentials.json"
+    saved = json.loads(saved_path.read_text()) if saved_path.exists() else {}
+    if admin := saved.get("admin"):
+        admin_user = admin["username"]
+        admin_password = "已在工作台修改，密码不回显；请使用你保存的新密码"
+    if proxy := saved.get("proxy"):
+        proxy_user, proxy_password = proxy["username"], proxy["password"]
     token = env["RAPIP_ADMIN_TOKEN"]
     server = env.get("RAPIP_DEPLOY_SERVER_HOST", "YOUR_SERVER_IP")
     admin_bind = env.get("RAPIP_ADMIN_BIND_IP") or env.get("RAPIP_BIND_IP") or "127.0.0.1"
@@ -55,7 +63,8 @@ user 替换为服务器 SSH 用户；检测到的服务器地址可能是内网 
 更新命令：bash scripts/deploy.sh
 查看状态：docker compose ps
 查看日志：docker compose logs --tail=100 gateway
-凭据保存在 .env；本页另存于 data/DEPLOYMENT_ACCESS.txt（默认挂载）。请勿公开或上传。
+初始化凭据在 .env；工作台修改后以 config/credentials.json 为准。管理密码仅保存哈希。
+本页另存于 data/DEPLOYMENT_ACCESS.txt（默认挂载）。请勿公开或上传。
 """
     directory = Path(env.get("RAPIP_DATA_DIR", "data"))
     directory.mkdir(parents=True, exist_ok=True)

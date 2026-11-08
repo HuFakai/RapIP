@@ -150,6 +150,7 @@ class QualityManager:
                 "created_at": time.time(),
             }
         }
+        self.archived_groups = {}
         self.slots = {}
         self.ledger = []
         self.source_usage = {}
@@ -164,6 +165,14 @@ class QualityManager:
 
     def load(self, data):
         self.groups.update(data.get("groups", {}))
+        self.archived_groups = {}
+        # Recover names already recorded by older versions before operation retention expires.
+        for op in sorted(self.g.operations.values(), key=lambda x: x.created_at):
+            result = op.result or {}
+            if op.kind in {"group_create", "group_update"} and result.get("id") and result.get("name"):
+                if result["id"] not in self.groups:
+                    self.archived_groups[result["id"]] = result["name"]
+        self.archived_groups.update(data.get("archived_groups", {}))
         self.slots = data.get("slots", {})
         self.ledger = data.get("ledger", [])
         self.source_usage = data.get("source_usage", {})
@@ -182,6 +191,7 @@ class QualityManager:
     def snapshot(self):
         return {
             "groups": self.groups,
+            "archived_groups": self.archived_groups,
             "slots": self.slots,
             "ledger": self.ledger,
             "source_usage": self.source_usage,
@@ -382,6 +392,7 @@ class QualityManager:
             )
             for node in nodes:
                 self._move(node, "default")
+            self.archived_groups[id] = self.groups[id]["name"]
             del self.groups[id]
             self.g.replenishment.pop(id, None)
             self.g.dynamic.policies.pop(id, None)

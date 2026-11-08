@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import time
@@ -36,6 +37,7 @@ class Observability:
         self.retention = RetentionPolicy()
         self.last_cleanup = None
         self.detail_paused = False
+        self.noise = {}
 
     async def open(self):
         try:
@@ -133,7 +135,24 @@ class Observability:
         if self.mode == "all" or (
             self.mode == "errors" and (item["result"] != "success" or reason != "peer_closed")
         ):
-            self.enqueue("connection", {k: v for k, v in item.items() if not k.startswith("_")})
+            record = {k: v for k, v in item.items() if not k.startswith("_")}
+            if not any(item.get(k) for k in ("group_id", "target", "ip")) and item["result"] in {
+                "authentication_rejected",
+                "protocol_error",
+            }:
+                bucket = int(item["at"] // 60)
+                self.noise = {k: v for k, v in self.noise.items() if k[0] >= bucket - 1}
+                key = (bucket, item["protocol"], item["result"])
+                previous = self.noise.get(key)
+                record.update(
+                    id=hashlib.sha256(f"{self.instance}:{key}".encode()).hexdigest()[:32],
+                    repeat_count=(previous or {}).get("repeat_count", 0) + 1,
+                    first_seen=(previous or {}).get("first_seen", item["at"]),
+                    last_seen=item["ended_at"],
+                    aggregated=True,
+                )
+                self.noise[key] = record
+            self.enqueue("connection", record)
 
     def enqueue(self, kind, item):
         if self.detail_paused:
@@ -225,8 +244,9 @@ class Observability:
                         span=span+excluded.span, peak=max(peak,excluded.peak), gauges=excluded.gauges,
                         instance=CASE WHEN instance=excluded.instance THEN instance ELSE 'mixed' END""",
                         (
-                            int(now // 10) * 10,
-                            10,
+                            int(now // self.retention.metrics_interval_seconds)
+                            * self.retention.metrics_interval_seconds,
+                            self.retention.metrics_interval_seconds,
                             scope,
                             scope_id,
                             *[c.get(k, 0) for k in COUNTERS],
@@ -238,7 +258,8 @@ class Observability:
                     )
                 for kind, item in records:
                     await self.db.execute(
-                        "INSERT OR IGNORE INTO records VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        """INSERT INTO records VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(id) DO UPDATE SET payload=excluded.payload""",
                         (
                             item["id"],
                             kind,
@@ -258,10 +279,11 @@ class Observability:
                 for key, values in captured.items():
                     for name, count in values.items():
                         self.counts[key][name] -= count
-                ids = {x[1]["id"] for x in records}
-                self.queue = deque((x for x in self.queue if x[1]["id"] not in ids), maxlen=2000)
+                ids = {id(x[1]) for x in records}
+                self.queue = deque((x for x in self.queue if id(x[1]) not in ids), maxlen=2000)
                 self.last_tick = now
-                self.error = None
+                if not self.detail_paused:
+                    self.error = None
                 if now - self.last_compact > 3600:
                     await self.compact(now)
                     self.last_compact = now
@@ -271,11 +293,11 @@ class Observability:
                 self.error = "观测写入失败；代理继续运行，曲线可能缺测"
 
     async def compact(self, now):
-        for source, target, cutoff in ((10, 60, now - 86400), (60, 900, now - 604800)):
+        for source, target, cutoff in ((10, 60, now - 86400), (30, 60, now - 86400), (60, 900, now - 604800)):
             cutoff = int(cutoff // target) * target
             sums = ",".join(f"SUM({x})" for x in COUNTERS)
             await self.db.execute(
-                f"""INSERT OR IGNORE INTO samples
+                f"""INSERT INTO samples
                 SELECT CAST(s.bucket / ? AS INTEGER)*?, ?, s.scope, s.scope_id, {sums},
                 SUM(s.span), MAX(s.peak),
                 (SELECT l.gauges FROM samples l WHERE l.scope=s.scope AND l.scope_id=s.scope_id
@@ -283,7 +305,13 @@ class Observability:
                  AND l.bucket<CAST(s.bucket / ? AS INTEGER)*?+? ORDER BY l.bucket DESC LIMIT 1),
                 CASE WHEN MIN(s.instance)=MAX(s.instance) THEN MAX(s.instance) ELSE 'mixed' END
                 FROM samples s WHERE s.resolution=? AND s.bucket<?
-                GROUP BY s.scope,s.scope_id,CAST(s.bucket / ? AS INTEGER)""",
+                GROUP BY s.scope,s.scope_id,CAST(s.bucket / ? AS INTEGER)
+                ON CONFLICT(resolution,scope,scope_id,bucket) DO UPDATE SET
+                up=up+excluded.up, down=down+excluded.down, attempts=attempts+excluded.attempts,
+                successes=successes+excluded.successes, failures=failures+excluded.failures,
+                probes=probes+excluded.probes, probe_ok=probe_ok+excluded.probe_ok,
+                span=span+excluded.span, peak=max(peak,excluded.peak), gauges=excluded.gauges,
+                instance=CASE WHEN instance=excluded.instance THEN instance ELSE 'mixed' END""",
                 (
                     target,
                     target,
@@ -330,15 +358,20 @@ class Observability:
             page_size = (await cursor.fetchone())[0]
         self.detail_paused = (pages - free) * page_size > self.retention.max_database_mb * 1024 * 1024
         if self.detail_paused:
-            self.mode = "off"
             self.error = f"观测有效数据达到 {self.retention.max_database_mb}MiB 保护阈值，明细采集已暂停"
+
+        elif self.error and "保护阈值" in self.error:
+            self.error = None
+        await self.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
     async def storage_status(self):
         result = {
             "policy": self.retention.model_dump(),
             "last_cleanup": self.last_cleanup,
             "database_bytes": sum(
-                p.stat().st_size for p in self.directory.glob("observability.sqlite3*") if p.is_file()
+                p.stat().st_size
+                for p in self.directory.glob("observability.sqlite3*")
+                if p.is_file() and not p.name.endswith("-shm")
             ),
             "records": 0,
             "samples": 0,
@@ -351,6 +384,12 @@ class Observability:
             for table in ("records", "samples"):
                 async with self.db.execute(f"SELECT COUNT(*) FROM {table}") as cursor:
                     result[table] = (await cursor.fetchone())[0]
+            async with self.db.execute("SELECT kind, COUNT(*) FROM records GROUP BY kind") as cursor:
+                result["record_kinds"] = dict(await cursor.fetchall())
+            async with self.db.execute(
+                "SELECT resolution, COUNT(*) FROM samples GROUP BY resolution"
+            ) as cursor:
+                result["sample_resolutions"] = dict(await cursor.fetchall())
             async with self.db.execute("PRAGMA freelist_count") as cursor:
                 free = (await cursor.fetchone())[0]
             async with self.db.execute("PRAGMA page_size") as cursor:
@@ -364,7 +403,7 @@ class Observability:
             scope, key = "account_group", account + ":" + group
         if not hasattr(self, "db"):
             return {"points": [], "error": self.error, "range": window}
-        step = max(10, int(seconds / 120 // 10) * 10)
+        step = max(self.retention.metrics_interval_seconds, int(seconds / 120 // 10) * 10)
         now = time.time()
         async with self.lock:
             async with self.db.execute(

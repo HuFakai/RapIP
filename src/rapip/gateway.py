@@ -12,6 +12,7 @@ from dataclasses import asdict
 import aiohttp
 
 from .config import Config, private_json
+from .credentials import Credentials
 from .dynamic import DynamicSwitch
 from .ipquality import IPQualityReports
 from .lifecycle import Lifecycle
@@ -34,6 +35,7 @@ log = logging.getLogger(__name__)
 class Gateway:
     def __init__(self, config: Config, provider_factory=Webshare, probe=probe_node):
         self.config, self.settings = config, config.settings
+        self.credentials = Credentials(config)
         self.provider_factory, self.probe = provider_factory, probe
         if probe is probe_node and config.egress_proxy:
 
@@ -285,7 +287,9 @@ class Gateway:
         self.lifecycle.collect_jobs()
         rows, self.lifecycle.pending = self.lifecycle.pending, []
         cutoff, self.lifecycle.cutoff = self.lifecycle.cutoff, None
-        task = asyncio.create_task(self.storage.save(self._snapshot(), rows, cutoff))
+        task = asyncio.create_task(
+            self.storage.save(self._snapshot(), rows, cutoff, self.observer.retention.max_trace_records)
+        )
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -1191,7 +1195,7 @@ class Gateway:
 
     def _prune_history(self, now):
         policy = self.observer.retention
-        self.lifecycle.cutoff = now - policy.event_days * 86400
+        self.lifecycle.cutoff = now - policy.trace_days * 86400
         self.lifecycle.related = {
             key: chain
             for key, chain in self.lifecycle.related.items()

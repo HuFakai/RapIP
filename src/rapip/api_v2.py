@@ -214,7 +214,7 @@ def register(app, gateway, auth, operate):
             dict(group_id=group_id, binding_id=binding_id, slot_id=slot_id, job_id=job_id, q=q.strip()),
             (page - 1) * page_size,
             page_size,
-            time.time() - g.observer.retention.event_days * 86400,
+            time.time() - g.observer.retention.trace_days * 86400,
         )
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
@@ -232,7 +232,7 @@ def register(app, gateway, auth, operate):
         event_view: bool = False,
         order: Literal["asc", "desc"] = "desc",
     ):
-        cutoff = time.time() - g.observer.retention.event_days * 86400
+        cutoff = time.time() - g.observer.retention.trace_days * 86400
         ip = ""
         if view == "ips" and q.strip():
             try:
@@ -431,7 +431,7 @@ def register(app, gateway, auth, operate):
 
     @app.get(prefix + "/groups", dependencies=deps)
     async def groups():
-        return {"items": g.quality.public_groups()}
+        return {"items": g.quality.public_groups(), "archived_names": g.quality.archived_groups}
 
     @app.post(prefix + "/groups", dependencies=deps)
     async def create(body: GroupCreate, request: Request):

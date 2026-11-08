@@ -65,7 +65,10 @@ export function Scope({
   onGroup: (v: string) => void;
 }) {
   const accounts = useQuery<{ items: AccountData[] }>("/accounts", true, 30000);
-  const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
+  const groups = useQuery<{
+    items: Group[];
+    archived_names?: Record<string, string>;
+  }>("/groups", true, 15000);
   return (
     <>
       <select
@@ -174,9 +177,13 @@ export function Time({ value }: { value?: number | null }) {
 }
 
 const AccountNames = createContext<Record<string, string>>({});
+const ArchivedGroupNames = createContext<Record<string, string>>({});
 const GroupNames = createContext<Group[] | undefined>(undefined);
 export function GroupNamesProvider({ children }: { children: ReactNode }) {
-  const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
+  const groups = useQuery<{
+    items: Group[];
+    archived_names?: Record<string, string>;
+  }>("/groups", true, 15000);
   const accounts = useQuery<{
     items: AccountData[];
     archived_names?: Record<string, string>;
@@ -193,7 +200,9 @@ export function GroupNamesProvider({ children }: { children: ReactNode }) {
   return (
     <AccountNames.Provider value={names}>
       <GroupNames.Provider value={groups.data?.items}>
-        {children}
+        <ArchivedGroupNames.Provider value={groups.data?.archived_names ?? {}}>
+          {children}
+        </ArchivedGroupNames.Provider>
       </GroupNames.Provider>
     </AccountNames.Provider>
   );
@@ -220,15 +229,22 @@ export function AccountLabel({
 export function GroupLabel({
   id,
   showId = true,
+  historicalName,
 }: {
   id?: string | null;
   showId?: boolean;
+  historicalName?: string;
 }) {
   const groups = useContext(GroupNames);
+  const archived = useContext(ArchivedGroupNames);
   if (!id) return <span>—</span>;
   const name =
     groups?.find((group) => group.id === id)?.name ??
-    (id === "default" ? "默认资源" : groups ? "已删除分组" : "读取分组…");
+    (id === "default"
+      ? "默认资源"
+      : groups
+        ? `${archived[id] ?? historicalName ?? id}（已删除）`
+        : "读取分组…");
   return (
     <span className="group-label" title={`${name} / ${id}`}>
       <span>{name}</span>

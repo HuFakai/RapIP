@@ -117,3 +117,108 @@ async def test_ai_prompt_matches_group_and_omits_credentials(client, gateway):
     assert "GET /api/v1/bindings?group_id=collect" in guide
     assert "UNKNOWN" in guide and "幂等" in guide and "保留期限" in guide
     assert gateway.config.socks_password not in guide and gateway.config.admin_token not in guide
+
+
+async def test_trace_retention_is_independent_and_capacity_report_is_complete(client, gateway):
+    now = time.time()
+    gateway.observer.retention = RetentionPolicy(event_days=1, trace_days=7)
+    gateway.lifecycle.add("assigned", ip="192.0.2.10", group_id="default", at=now - 3 * 86400)
+    gateway.events.append({"at": now - 3 * 86400, "kind": "old-runtime"})
+    await gateway.cleanup_history()
+    assert not any(e.get("kind") == "old-runtime" for e in gateway.events)
+    rows = await gateway.storage.history("ips", {}, 0, 100, now - 7 * 86400)
+    assert any(e.get("ip") == "192.0.2.10" for e in rows[0])
+    status = (await client.get("/api/v1/settings/storage", headers=HEADERS)).json()
+    assert status["trace_records"] > 0
+    assert status["database_bytes"] == status["observation_database_bytes"] + status["state_database_bytes"]
+    assert status["policy"]["metrics_interval_seconds"] == 60
+
+
+async def test_minute_noise_aggregation_keeps_true_attempt_counts(gateway):
+    obs = gateway.observer
+    obs.mode = "all"
+    for _ in range(5):
+        obs.finish(obs.begin("CONNECT"), "authentication_rejected")
+    await obs.flush(gateway)
+    rows = await obs.records("connection", {})
+    assert rows["total"] == 1 and rows["items"][0]["repeat_count"] == 5
+    obs.finish(obs.begin("CONNECT"), "authentication_rejected")
+    await obs.flush(gateway)
+    rows = await obs.records("connection", {})
+    assert rows["total"] == 1 and rows["items"][0]["repeat_count"] == 6
+    metrics = await obs.metrics()
+    assert metrics["summary"]["attempts"] == 6 and metrics["summary"]["failures"] == 6
+    # Valid routes still have individual records, even if they fail before dialing.
+    for i in range(2):
+        item = obs.begin("CONNECT")
+        item.update(group_id="default", worker="01", session=f"bad{i}")
+        obs.finish(item, "SESSION_RETIRED")
+    await obs.flush(gateway)
+    assert (await obs.records("connection", {}))["total"] == 3
+
+
+async def test_compaction_merges_overlapping_precision_without_losing_counters(gateway):
+    obs = gateway.observer
+    bucket = int((time.time() - 90000) // 60) * 60
+    for resolution, up in ((10, 100), (30, 200), (60, 300)):
+        await obs.db.execute(
+            "INSERT INTO samples VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (bucket, resolution, "global", "", up, 0, 1, 1, 0, 0, 0, 5, 1, "{}", "test"),
+        )
+    await obs.db.commit()
+    await obs.compact(time.time())
+    async with obs.db.execute("SELECT sum(up),sum(attempts),count(*) FROM samples WHERE scope='global'") as c:
+        assert await c.fetchone() == (600, 3, 1)
+    await obs.compact(time.time())
+    async with obs.db.execute("SELECT sum(up),sum(attempts) FROM samples WHERE scope='global'") as c:
+        assert await c.fetchone() == (600, 3)
+
+
+async def test_deleted_group_names_are_archived_and_recovered(gateway):
+    from rapip.quality import QualityManager
+
+    await gateway.quality.save_group("oldgroup", {"name": "数据项目"}, [], create=True)
+    await gateway.quality.delete("oldgroup")
+    assert gateway.quality.archived_groups["oldgroup"] == "数据项目"
+    restored = QualityManager(gateway)
+    restored.load(gateway.quality.snapshot())
+    assert restored.archived_groups["oldgroup"] == "数据项目"
+    gateway.operations["historic"] = Operation(
+        "historic", "group_create", state="COMPLETED", result={"id": "legacy", "name": "原分组名称"}
+    )
+    restored.load({"groups": {}})
+    assert restored.archived_groups["legacy"] == "原分组名称"
+
+
+async def test_noise_arriving_during_flush_is_not_discarded(gateway, monkeypatch):
+    obs = gateway.observer
+    obs.finish(obs.begin("CONNECT"), "authentication_rejected")
+    execute = obs.db.execute
+    injected = False
+
+    async def interleave(sql, *args, **kwargs):
+        nonlocal injected
+        if "INSERT INTO records" in sql and not injected:
+            injected = True
+            obs.finish(obs.begin("CONNECT"), "authentication_rejected")
+        return await execute(sql, *args, **kwargs)
+
+    # Only replace during flush, where execute is awaited rather than a context manager.
+    monkeypatch.setattr(obs.db, "execute", interleave)
+    obs.last_compact = time.time()
+    await obs.flush(gateway)
+    monkeypatch.setattr(obs.db, "execute", execute)
+    assert len([r for kind, r in obs.queue if kind == "connection"]) == 1
+    await obs.flush(gateway)
+    rows = await obs.records("connection", {})
+    assert rows["items"][0]["repeat_count"] == 2
+    assert (await obs.metrics())["summary"]["attempts"] == 2
+
+
+async def test_trace_cap_applies_when_policy_changes_without_new_events(gateway):
+    records = [{"id": str(i), "kind": "test", "at": float(i)} for i in range(1005)]
+    await gateway.storage.save(gateway._snapshot(), records, trace_limit=20000)
+    await gateway.storage.save(gateway._snapshot(), trace_limit=1000)
+    async with gateway.storage.db.execute("SELECT count(*),min(at) FROM lifecycle") as c:
+        count, oldest = await c.fetchone()
+    assert count == 1000 and oldest >= 5

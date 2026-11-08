@@ -236,3 +236,24 @@ def test_failed_git_update_does_not_build_or_restart(deployment, failure):
     assert ["compose", "build", "gateway"] not in commands(project)
     assert not any(command[:3] == ["compose", "up", "-d"] for command in commands(project))
     assert not (project / ".rapip-deploy.lock").exists()
+
+
+def test_deployment_output_uses_persisted_credentials_without_old_admin_password(deployment):
+    project, run = deployment
+    existing_env(project)
+    (project / "config").mkdir()
+    saved = {
+        "admin": {"username": "owner", "password_hash": "fixture-hash-not-for-login"},
+        "proxy": {"username": "rapip", "password": "fixture-new-proxy-password"},
+    }
+    path = project / "config/credentials.json"
+    path.write_text(json.dumps(saved))
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert "管理员用户名：owner" in result.stdout
+    assert "密码不回显" in result.stdout
+    assert "existing$()notexecuted" not in result.stdout
+    assert "fixture-hash-not-for-login" not in result.stdout
+    assert "rapip-worker-01-session-first" in result.stdout
+    assert "fixture-new-proxy-password" in result.stdout
+    assert json.loads(path.read_text()) == saved

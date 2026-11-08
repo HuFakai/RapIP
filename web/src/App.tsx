@@ -60,6 +60,7 @@ import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { Nodes } from "./components/operations/Nodes";
+import { Security } from "./components/operations/Security";
 import { GroupLabel, GroupNamesProvider } from "./components/operations/Common";
 import { Retention } from "./components/operations/Retention";
 import { Groups, QualitySources } from "./components/operations/Groups";
@@ -592,6 +593,7 @@ function BindingsPage({
 
 function AccountsPage({ notify }: { notify: (message: string) => void }) {
   const query = useQuery<{ items: AccountData[] }>("/accounts");
+  const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -726,11 +728,19 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
     }
   }
   return (
-    <div className="page-enter">
+    <div className="page-enter accounts-page">
       <div className="page-subtoolbar">
-        <p className="muted small">
-          账号暂停只影响新分配，保留正在使用的连接。
-        </p>
+        <div className="account-search">
+          <input
+            aria-label="搜索上游账号"
+            placeholder="搜索名称、备注、账号 ID…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <span className="small muted">
+            共 {query.data?.items.length ?? 0} 个账号 · 暂停后保留现有连接
+          </span>
+        </div>
         <Button
           onClick={() => {
             setError("");
@@ -744,176 +754,183 @@ function AccountsPage({ notify }: { notify: (message: string) => void }) {
       <ErrorNote message={query.error} />
       {query.isLoading && <LoadingState label="正在加载上游账号…" />}
       <div className="account-list">
-        {query.data?.items.map((item) => (
-          <section className="surface account-surface" key={item.account_id}>
-            <div className="account-heading">
-              <div className="account-emblem">
-                <Globe2 size={22} />
-              </div>
-              <div>
-                <h2>{item.name}</h2>
-                <span className="small muted mono">
-                  {item.account_id} / WEBSHARE
-                </span>
-              </div>
-              <Badge state={item.health.state} />
-              <div className="account-actions">
-                {" "}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setError("");
-                    setEditing(item);
-                  }}
-                >
-                  <Settings2 size={15} />
-                  编辑
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  aria-label={`删除账号 ${item.name}`}
-                  onClick={() => {
-                    setRemoving(item);
-                    setConfirmation("");
-                    setError("");
-                  }}
-                >
-                  <Trash2 size={14} />
-                  删除
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void toggle(item)}
-                >
-                  {item.enabled ? <Pause size={14} /> : <Play size={14} />}
-                  {item.enabled ? "暂停新分配" : "恢复分配"}
-                </Button>
-              </div>
-            </div>
-            {item.notes && (
-              <p className="account-notes">
-                <span>备注</span>
-                {item.notes}
-              </p>
-            )}
-            <div className="account-metrics">
-              <div>
-                <span>受管 IP</span>
-                <strong>
-                  {item.node_count}
-                  <small>个</small>
-                </strong>
-              </div>
-              <div>
-                <span>可分配</span>
-                <strong className="accent">
-                  {item.fresh_count}
-                  <small>个</small>
-                </strong>
-              </div>
-              <div>
-                <span>供应商更换额度 · 剩余 / 总额</span>
-                <strong className="account-quota-value">
-                  {quotaPair(
-                    item.supplier_usage?.replacement?.remaining,
-                    item.supplier_usage?.replacement?.total,
-                  )}
-                  <small>次</small>
-                </strong>
-                <p className="quota-metric-help">
-                  已用 {item.supplier_usage?.replacement?.used ?? "—"} 次
-                  {item.supplier_usage?.stale ? " · 待更新" : ""}
-                </p>
-              </div>
-              <div>
-                <span>套餐流量 · 剩余 / 总量</span>
-                <strong className="account-quota-value">
-                  {item.supplier_usage?.traffic?.unlimited
-                    ? "不限量"
-                    : trafficPair(
-                        item.supplier_usage?.traffic?.remaining_bytes,
-                        item.supplier_usage?.traffic?.total_bytes,
-                      )}
-                </strong>
-                <p className="quota-metric-help">
-                  本期已用{" "}
-                  {packageBytes(item.supplier_usage?.traffic?.used_bytes)}
-                </p>
-              </div>
-            </div>
-            <div className="supplier-sync-line">
-              <div>
-                <span
-                  className={`ops-status tone-${item.supplier_usage?.stale ? "warn" : "good"}`}
-                >
-                  {item.supplier_usage?.stale
-                    ? "套餐数据待更新"
-                    : "Webshare API"}
-                </span>
-                <span>
-                  {item.supplier_usage?.checked_at
-                    ? `同步 ${date(item.supplier_usage.checked_at)}`
-                    : "尚未同步套餐"}{" "}
-                  · 供应商用量按小时聚合
-                </span>
-                {item.supplier_usage?.error && (
-                  <span className="ops-warning">
-                    {item.supplier_usage.error}
-                  </span>
-                )}
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!!syncing}
-                onClick={() => void refreshUsage(item)}
-              >
-                <RefreshCw
-                  size={13}
-                  className={syncing === item.account_id ? "spin" : ""}
-                />
-                同步套餐
-              </Button>
-            </div>
-            <details className="account-local-budget">
-              <summary>
-                本地安全预算与网关计数{" "}
-                <span>
-                  {item.usage.submitted} / {item.replacement_budget ?? "不限"}{" "}
-                  次
-                </span>
-              </summary>
-              <div className="account-budget">
+        {query.data?.items
+          .filter((item) =>
+            [item.name, item.account_id, item.notes]
+              .join(" ")
+              .toLowerCase()
+              .includes(search.toLowerCase()),
+          )
+          .map((item) => (
+            <section className="surface account-surface" key={item.account_id}>
+              <div className="account-heading">
+                <div className="account-emblem">
+                  <Globe2 size={22} />
+                </div>
                 <div>
-                  <span>本地替换预算</span>
-                  <span>
-                    {item.replacement_budget !== null
-                      ? `${Math.max(0, item.replacement_budget - item.usage.submitted).toLocaleString()} 次可用`
-                      : "未设上限"}
+                  <h2 title={item.name}>{item.name}</h2>
+                  <span className="small muted mono">
+                    {item.account_id} / WEBSHARE
                   </span>
                 </div>
-                <div className="budget-track">
-                  <i
-                    style={{
-                      width: `${item.replacement_budget ? Math.max(0, 1 - item.usage.submitted / item.replacement_budget) * 100 : 100}%`,
+                <Badge state={item.health.state} />
+                <div className="account-actions">
+                  {" "}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setError("");
+                      setEditing(item);
                     }}
-                  />
+                  >
+                    <Settings2 size={15} />
+                    编辑
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    aria-label={`删除账号 ${item.name}`}
+                    onClick={() => {
+                      setRemoving(item);
+                      setConfirmation("");
+                      setError("");
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    删除
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void toggle(item)}
+                  >
+                    {item.enabled ? <Pause size={14} /> : <Play size={14} />}
+                    {item.enabled ? "暂停新分配" : "恢复分配"}
+                  </Button>
                 </div>
-                <p>
-                  成功补货 {item.usage.completed} 次 · 碰撞重抽{" "}
-                  {item.usage.redraws} 次 · 非供应商实时余额
-                </p>
               </div>
-            </details>
-            <div className="account-footer">
-              <span>{item.health.message}</span>
-              <span>最近同步 {date(item.health.synced_at)}</span>
-            </div>
-          </section>
-        ))}
+              {item.notes && (
+                <p className="account-notes">
+                  <span>备注</span>
+                  {item.notes}
+                </p>
+              )}
+              <div className="account-metrics">
+                <div>
+                  <span>受管 IP</span>
+                  <strong>
+                    {item.node_count}
+                    <small>个</small>
+                  </strong>
+                </div>
+                <div>
+                  <span>可分配</span>
+                  <strong className="accent">
+                    {item.fresh_count}
+                    <small>个</small>
+                  </strong>
+                </div>
+                <div>
+                  <span>供应商更换额度 · 剩余 / 总额</span>
+                  <strong className="account-quota-value">
+                    {quotaPair(
+                      item.supplier_usage?.replacement?.remaining,
+                      item.supplier_usage?.replacement?.total,
+                    )}
+                    <small>次</small>
+                  </strong>
+                  <p className="quota-metric-help">
+                    已用 {item.supplier_usage?.replacement?.used ?? "—"} 次
+                    {item.supplier_usage?.stale ? " · 待更新" : ""}
+                  </p>
+                </div>
+                <div>
+                  <span>套餐流量 · 剩余 / 总量</span>
+                  <strong className="account-quota-value">
+                    {item.supplier_usage?.traffic?.unlimited
+                      ? "不限量"
+                      : trafficPair(
+                          item.supplier_usage?.traffic?.remaining_bytes,
+                          item.supplier_usage?.traffic?.total_bytes,
+                        )}
+                  </strong>
+                  <p className="quota-metric-help">
+                    本期已用{" "}
+                    {packageBytes(item.supplier_usage?.traffic?.used_bytes)}
+                  </p>
+                </div>
+              </div>
+              <div className="supplier-sync-line">
+                <div>
+                  <span
+                    className={`ops-status tone-${item.supplier_usage?.stale ? "warn" : "good"}`}
+                  >
+                    {item.supplier_usage?.stale
+                      ? "套餐数据待更新"
+                      : "Webshare API"}
+                  </span>
+                  <span>
+                    {item.supplier_usage?.checked_at
+                      ? `同步 ${date(item.supplier_usage.checked_at)}`
+                      : "尚未同步套餐"}{" "}
+                    · 供应商用量按小时聚合
+                  </span>
+                  {item.supplier_usage?.error && (
+                    <span className="ops-warning">
+                      {item.supplier_usage.error}
+                    </span>
+                  )}
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!!syncing}
+                  onClick={() => void refreshUsage(item)}
+                >
+                  <RefreshCw
+                    size={13}
+                    className={syncing === item.account_id ? "spin" : ""}
+                  />
+                  同步套餐
+                </Button>
+              </div>
+              <details className="account-local-budget">
+                <summary>
+                  本地安全预算与网关计数{" "}
+                  <span>
+                    {item.usage.submitted} / {item.replacement_budget ?? "不限"}{" "}
+                    次
+                  </span>
+                </summary>
+                <div className="account-budget">
+                  <div>
+                    <span>本地替换预算</span>
+                    <span>
+                      {item.replacement_budget !== null
+                        ? `${Math.max(0, item.replacement_budget - item.usage.submitted).toLocaleString()} 次可用`
+                        : "未设上限"}
+                    </span>
+                  </div>
+                  <div className="budget-track">
+                    <i
+                      style={{
+                        width: `${item.replacement_budget ? Math.max(0, 1 - item.usage.submitted / item.replacement_budget) * 100 : 100}%`,
+                      }}
+                    />
+                  </div>
+                  <p>
+                    成功补货 {item.usage.completed} 次 · 碰撞重抽{" "}
+                    {item.usage.redraws} 次 · 非供应商实时余额
+                  </p>
+                </div>
+              </details>
+              <div className="account-footer">
+                <span>{item.health.message}</span>
+                <span>最近同步 {date(item.health.synced_at)}</span>
+              </div>
+            </section>
+          ))}
       </div>
       {query.data?.items.length === 0 && (
         <section className="surface">
@@ -1165,6 +1182,7 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
     ["retention", "数据生命周期"],
     ["appearance", "外观主题"],
     ["runtime", "运行配置"],
+    ["security", "账号与安全"],
   ] as const;
   const initial =
     new URLSearchParams(location.hash.split("?")[1]).get("tab") ?? "scheduler";
@@ -1355,6 +1373,14 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
         hidden={section !== "retention"}
       >
         {visited.includes("retention") && <Retention notify={notify} />}
+      </div>
+      <div
+        role="tabpanel"
+        id="settings-panel-security"
+        aria-labelledby="settings-tab-security"
+        hidden={section !== "security"}
+      >
+        {visited.includes("security") && <Security notify={notify} />}
       </div>
       <ErrorNote message={query.error} />
       {query.isLoading && section !== "appearance" && (
@@ -1734,7 +1760,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.12</span>
+            <span className="version-tag">v0.2.13</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">

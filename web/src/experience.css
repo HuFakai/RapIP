@@ -1620,3 +1620,219 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+.accounts-page .account-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 365px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.accounts-page .account-surface {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.accounts-page .account-heading {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  padding: 15px 16px 12px;
+  gap: 10px;
+}
+.accounts-page .account-heading h2 {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accounts-page .account-emblem {
+  width: 36px;
+  height: 36px;
+  color: var(--accent);
+  border-radius: 8px;
+}
+.accounts-page .account-heading > .badge {
+  margin: 0;
+}
+.accounts-page .account-heading > div:nth-child(2) {
+  min-width: 0;
+}
+.accounts-page .account-heading .mono {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.accounts-page .account-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  margin: 3px 0 0;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+}
+.accounts-page .account-actions > button:last-child {
+  margin-left: auto;
+}
+.accounts-page .account-notes {
+  margin: 0 16px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.accounts-page .account-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.accounts-page .account-metrics > div,
+.accounts-page .account-metrics > div:first-child {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+  border-radius: 7px;
+}
+.accounts-page .account-metrics span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.accounts-page .account-metrics strong,
+.accounts-page .account-metrics strong.account-quota-value {
+  font-size: 20px;
+  margin-top: 7px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.accounts-page .account-metrics > div:nth-child(3) strong {
+  color: var(--status-warn);
+}
+.accounts-page .account-metrics > div:nth-child(4) strong.account-quota-value {
+  font-size: 18px;
+  color: var(--status-good);
+}
+.accounts-page .account-metrics small {
+  margin-left: 5px;
+  color: var(--muted);
+}
+.accounts-page .quota-metric-help {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+.accounts-page .supplier-sync-line {
+  margin: 0 16px;
+  padding: 10px 0;
+  gap: 8px;
+  align-items: center;
+}
+.accounts-page .supplier-sync-line > div {
+  gap: 5px;
+  font-size: 12px;
+}
+.accounts-page .account-local-budget {
+  margin: 0 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.accounts-page .account-local-budget > summary {
+  font-size: 12px;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.accounts-page .account-budget {
+  margin: 10px 0 0;
+  padding-top: 10px;
+}
+.accounts-page .account-footer {
+  padding: 10px 16px;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.account-search {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.account-search input {
+  width: 280px;
+  max-width: 100%;
+}
+.credential-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.credential-card {
+  padding: 20px;
+  min-width: 0;
+}
+.credential-card > header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.credential-card > header > svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.credential-card h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.credential-card header p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.credential-card .form-stack {
+  gap: 14px;
+}
+.credential-passwords {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.credential-impact {
+  background: color-mix(in srgb, var(--status-warn) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 22%, var(--line));
+  color: var(--text);
+  border-radius: 7px;
+  padding: 11px 12px;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+}
+.retention-breakdown {
+  display: flex;
+  gap: 9px 20px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  margin-bottom: 16px;
+  border-block: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+.retention-breakdown b {
+  color: var(--text);
+  margin-left: 4px;
+  font-weight: 500;
+}
+@media (max-width: 1000px) {
+  .credential-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 540px) {
+  .credential-passwords {
+    grid-template-columns: 1fr;
+  }
+  .accounts-page .page-subtoolbar {
+    flex-wrap: wrap;
+  }
+  .account-search input {
+    width: 100%;
+  }
+}
+
+.accounts-page .account-local-budget > summary {
+  padding: 2px 0;
+}

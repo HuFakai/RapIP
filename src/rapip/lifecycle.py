@@ -38,6 +38,8 @@ class Lifecycle:
         if route:
             item.update(worker=route.worker, session=route.session, group_id=route.group)
         item.update(detail)
+        if group := self.g.quality.groups.get(item.get("group_id")):
+            item.setdefault("group_name", group["name"])
         if node and kind in {"webshare", "admission", "draining"} and node.id in self.related:
             item.setdefault("chain_id", self.related[node.id])
         if binding and item.get("generation") and not item.get("chain_id"):

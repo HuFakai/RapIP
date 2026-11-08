@@ -251,6 +251,11 @@ export function Connections({ notify }: { notify: (v: string) => void }) {
                   <td className="mono">{r.target || "—"}</td>
                   <td>
                     <Status state={r.result} />
+                    {r.aggregated && (
+                      <small className="accent">
+                        1 分钟内同类请求合并 · {r.repeat_count} 次
+                      </small>
+                    )}
                     {r.socks_reply != null && (
                       <small>SOCKS 返回码 {r.socks_reply}</small>
                     )}

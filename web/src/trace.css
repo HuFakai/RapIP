@@ -1054,3 +1054,110 @@
 .dialog-content.dialog-wide:has(.ping0-report) {
   height: auto;
 }
+
+/* Narrative at left, concrete endpoint details at right. */
+.journey-card {
+  --journey-color: var(--accent);
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 1fr);
+  column-gap: 20px;
+  align-content: start;
+  border-inline-start: 3px solid
+    color-mix(in srgb, var(--journey-color) 65%, var(--line));
+}
+.tone-good > .journey-card {
+  --journey-color: var(--status-good);
+}
+.tone-warn > .journey-card {
+  --journey-color: var(--status-warn);
+}
+.journey-card > header {
+  grid-column: 1;
+  align-self: start;
+}
+.journey-card > header > strong {
+  color: var(--journey-color);
+}
+.journey-card > header .group-label {
+  color: var(--text);
+  background: color-mix(in srgb, var(--journey-color) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--journey-color) 18%, var(--line));
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.journey-card > p {
+  grid-column: 1;
+  margin: 6px 0 0;
+  color: var(--text);
+  opacity: 0.85;
+}
+.journey-card > .journey-context {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-content: center;
+  align-items: center;
+  gap: 7px;
+  border-left: 1px solid var(--line);
+  padding-left: 17px;
+  min-width: 0;
+}
+.journey-route {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.journey-route > svg {
+  color: var(--journey-color);
+  flex-shrink: 0;
+}
+.journey-route .journey-ip {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 17%, var(--line));
+  font-size: 13px;
+}
+.journey-ip b {
+  color: var(--text);
+  font-size: 12px;
+}
+.journey-chip {
+  max-width: 100%;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.journey-chip.chip-worker {
+  color: #c3a6f7;
+  background: #a78bfa0c;
+  border-color: #a78bfa32;
+}
+.journey-chip.chip-session {
+  color: var(--status-warn);
+  background: #eeb85d08;
+  border-color: #eeb85d30;
+}
+.journey-chip code {
+  color: inherit;
+  font-size: 12px;
+}
+.journey-expanded {
+  grid-column: 1 / -1;
+}
+@media (max-width: 1160px) {
+  .journey-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .journey-card > .journey-context {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 9px;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .journey-route {
+    width: auto;
+  }
+}

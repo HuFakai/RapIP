@@ -158,6 +158,8 @@ export interface OverviewData {
   at: number;
 }
 export interface ConnectionRecord {
+  repeat_count?: number;
+  aggregated?: boolean;
   socks_reply?: number;
   socks_command?: number;
   error_message?: string;

@@ -24,6 +24,7 @@ interface Entry {
   at: number;
   kind: string;
   group_id?: string;
+  group_name?: string;
   worker?: string;
   session?: string;
   old_session?: string;
@@ -343,7 +344,11 @@ function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
       <article className="journey-card">
         <header>
           <strong>{title}</strong>
-          <GroupLabel id={e.group_id} showId={false} />
+          <GroupLabel
+            id={e.group_id}
+            historicalName={e.group_name}
+            showId={false}
+          />
           <button
             type="button"
             className="journey-details-button"
@@ -355,29 +360,31 @@ function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
         </header>
         <p>{body}</p>
         <div className="journey-context">
-          {origin && (
-            <>
-              <IP ip={origin} country={e.old_country} />
-              <ArrowRight size={13} />
-            </>
-          )}
-          <IP ip={e.ip} country={e.country} slot={e.slot_id} />
-          {e.new_ip && (
-            <>
-              <ArrowRight size={13} />
-              <IP ip={e.new_ip} country={e.new_country} slot={e.slot_id} />
-            </>
-          )}
-          <span className="journey-chip">
+          <div className="journey-route">
+            {origin && (
+              <>
+                <IP ip={origin} country={e.old_country} />
+                <ArrowRight size={13} />
+              </>
+            )}
+            <IP ip={e.ip} country={e.country} slot={e.slot_id} />
+            {e.new_ip && (
+              <>
+                <ArrowRight size={13} />
+                <IP ip={e.new_ip} country={e.new_country} slot={e.slot_id} />
+              </>
+            )}
+          </div>
+          <span className="journey-chip chip-worker">
             {e.kind === "webshare" ? "原工位" : "工位"}{" "}
             <code>{worker ?? "未绑定"}</code>
           </span>
-          <span className="journey-chip">
+          <span className="journey-chip chip-session">
             {e.kind === "webshare" ? "原 session" : "session"}{" "}
             <code>{e.session ?? "未绑定"}</code>
           </span>
           {future && (
-            <span className="journey-chip">
+            <span className="journey-chip chip-session">
               关联的新 session <code>{future}</code>
             </span>
           )}
@@ -474,9 +481,7 @@ export function Lifecycle() {
     job = params.get("job_id") ?? "";
   const [draft, setDraft] = useState(q),
     [page, setPage] = useState(1);
-  const [order, setOrder] = useState<"asc" | "desc">(
-    q || binding || worker || slot || job ? "asc" : "desc",
-  );
+  const [order, setOrder] = useState<"asc" | "desc">("desc");
   const size = 25;
   const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
   const query = useQuery<Result>(

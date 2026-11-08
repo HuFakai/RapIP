@@ -12,6 +12,11 @@ interface Storage {
   policy: Policy;
   database_bytes: number;
   reusable_bytes: number;
+  observation_database_bytes: number;
+  state_database_bytes: number;
+  trace_records: number;
+  record_kinds?: Record<string, number>;
+  state_reusable_bytes: number;
   records: number;
   samples: number;
   operations: number;
@@ -27,6 +32,8 @@ const fields = [
   ["metrics_days", "趋势统计", "天", 7, 365],
   ["operation_days", "已结束管理操作", "天", 1, 365],
   ["event_days", "运行事件", "天", 1, 365],
+  ["trace_days", "代理追踪", "天", 1, 365],
+  ["max_trace_records", "代理追踪条数上限", "条", 1000, 200000],
   ["max_records", "明细总条数上限", "条", 1000, 1000000],
   ["max_database_mb", "观测库保护阈值", "MiB", 32, 4096],
 ] as const;
@@ -90,7 +97,7 @@ export function Retention({ notify }: { notify: (text: string) => void }) {
             <div>
               <Database size={17} />
               <strong>{bytes(d.database_bytes)}</strong>
-              <span>数据库与 WAL 文件</span>
+              <span>两份数据库及 WAL 总量</span>
             </div>
             <div>
               <strong>{d.records.toLocaleString()}</strong>
@@ -101,12 +108,38 @@ export function Retention({ notify }: { notify: (text: string) => void }) {
               <span>统计采样</span>
             </div>
             <div>
-              <strong>{d.operations.toLocaleString()}</strong>
-              <span>管理操作</span>
+              <strong>{d.trace_records.toLocaleString()}</strong>
+              <span>代理追踪事件 · 独立记录</span>
             </div>
+          </div>
+          <div className="retention-breakdown">
+            <span>
+              观测库 <b>{bytes(d.observation_database_bytes)}</b>
+            </span>
+            <span>
+              调度与追踪库 <b>{bytes(d.state_database_bytes)}</b>
+            </span>
+            <span>
+              管理操作 <b>{d.operations.toLocaleString()}</b>
+            </span>
+            <span>
+              运行事件 <b>{d.events.toLocaleString()}</b>
+            </span>
           </div>
           <form onSubmit={save} key={JSON.stringify(d.policy)}>
             <div className="retention-fields">
+              <label>
+                <span>趋势存储精度</span>
+                <select
+                  name="metrics_interval_seconds"
+                  aria-label="趋势存储精度"
+                  defaultValue={d.policy.metrics_interval_seconds}
+                >
+                  <option value="60">每分钟 · 推荐，节省存储</option>
+                  <option value="30">每 30 秒</option>
+                  <option value="10">每 10 秒 · 更多细节</option>
+                </select>
+              </label>
               {fields.map(([key, label, unit, min, max]) => (
                 <label key={key}>
                   <span>{label}</span>
@@ -127,9 +160,9 @@ export function Retention({ notify }: { notify: (text: string) => void }) {
               ))}
             </div>
             <p className="field-help">
-              超过保留时间或条数上限的历史记录会被删除。趋势数据在 24
-              小时后降采样到 1 分钟、7 天后降采样到 15
-              分钟。缩短期限将影响已有历史。
+              超过保留时间或条数上限的历史记录会被删除。趋势默认按分钟存储，实时指标仍每
+              5 秒更新；旧的细粒度采样在 24 小时后合并到 1 分钟、7 天后合并到 15
+              分钟。未认证的重复请求按协议、结果每分钟合并，失败次数仍完整统计。缩短期限将影响已有历史。
             </p>
             <div className="quality-wizard-footer">
               <span>
@@ -147,8 +180,8 @@ export function Retention({ notify }: { notify: (text: string) => void }) {
               <p className="field-help">
                 {d.protected}
                 。进行中的操作和仍受幂等键保护的结果不会清理。当前有{" "}
-                {bytes(d.reusable_bytes)}{" "}
-                页空间可复用；删除记录后文件不一定立即缩小。达到有效数据保护阈值时暂停明细采集，可清理后在连接日志页面重新开启。
+                {bytes(d.reusable_bytes + d.state_reusable_bytes)}{" "}
+                页空间可复用；删除记录后文件不一定立即缩小。达到观测库有效数据保护阈值时暂停明细采集，清理后自动恢复原有采集设置。
               </p>
               <Button
                 variant="secondary"

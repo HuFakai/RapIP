@@ -38,6 +38,22 @@ class Login(Model):
     password: str = Field(max_length=256)
 
 
+class CredentialChange(Model):
+    scope: Literal["admin", "proxy"]
+    current_password: str = Field(min_length=1, max_length=256)
+    username: str = Field(min_length=1, max_length=64)
+    new_password: str | None = Field(default=None, min_length=12, max_length=128)
+
+    @model_validator(mode="after")
+    def valid_username(self):
+        pattern = r"[A-Za-z0-9_.@-]{1,64}" if self.scope == "admin" else r"[A-Za-z0-9]{1,64}"
+        if self.scope == "proxy" and self.new_password and len(self.new_password.encode()) > 255:
+            raise ValueError("代理密码 UTF-8 编码不能超过 255 字节")
+        if not re.fullmatch(pattern, self.username):
+            raise ValueError("用户名格式不正确")
+        return self
+
+
 class Rotation(Model):
     mode: Literal["graceful", "hard"] = "graceful"
     session_policy: Literal["keep", "new"] = "keep"
@@ -181,7 +197,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.12", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.13", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -221,7 +237,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         if authorization.startswith("Bearer ") and hmac.compare_digest(authorization[7:], config.admin_token):
             return {"username": config.admin_user, "csrf": None, "token": True}
         item = sessions.get(request.cookies.get(cookie_name, ""))
-        if not item or item["expires"] < time.time():
+        if not item or item["expires"] < time.time() or item.get("revision") != gateway.credentials.revision:
             raise HTTPException(401, "请先登录")
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             check_origin(request)
@@ -254,7 +270,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         recent.append(time.time())
         if not (
             hmac.compare_digest(body.username.encode(), config.admin_user.encode())
-            and hmac.compare_digest(body.password.encode(), config.admin_password.encode())
+            and await gateway.credentials.verify(body.password)
         ):
             raise HTTPException(401, "用户名或密码不正确")
         recent.clear()
@@ -267,6 +283,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
             "username": config.admin_user,
             "csrf": secrets.token_urlsafe(24),
             "expires": time.time() + 43200,
+            "revision": gateway.credentials.revision,
         }
         sessions[token] = item
         response.set_cookie(
@@ -289,6 +306,28 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
         sessions.pop(request.cookies.get(cookie_name, ""), None)
         response.delete_cookie(cookie_name, path="/")
         return {"ok": True}
+
+    @app.get(prefix + "/settings/credentials", dependencies=[Depends(auth)])
+    async def credential_status():
+        return gateway.credentials.public()
+
+    @app.patch(prefix + "/settings/credentials", dependencies=[Depends(auth)])
+    async def change_credentials(body: CredentialChange, request: Request, response: Response):
+        peer = "credentials:" + (request.client.host if request.client else "unknown")
+        recent = attempts[peer]
+        while recent and recent[0] < time.time() - 60:
+            recent.popleft()
+        if len(recent) >= 5:
+            raise HTTPException(429, "密码验证过于频繁，请稍后再试")
+        recent.append(time.time())
+        result = await gateway.credentials.change(
+            body.scope, body.current_password, body.username, body.new_password
+        )
+        recent.clear()
+        if result["requires_login"]:
+            sessions.clear()
+            response.delete_cookie(cookie_name, path="/")
+        return result
 
     @app.get(prefix + "/openapi.json", dependencies=[Depends(auth)])
     async def openapi():
@@ -661,7 +700,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "tunnel_idle_timeout": 0,
                 "session_expires": False,
                 "fault_failover": "由质量组决定，默认关闭",
-                "version": "0.2.12",
+                "version": "0.2.13",
             },
         }
 
@@ -671,11 +710,16 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
 
     @app.get(prefix + "/settings/storage", dependencies=[Depends(auth)])
     async def storage_status():
+        observed = await gateway.observer.storage_status()
+        durable = await gateway.storage.status()
         return {
-            **await gateway.observer.storage_status(),
+            **observed,
+            **durable,
+            "observation_database_bytes": observed["database_bytes"],
+            "database_bytes": observed["database_bytes"] + durable["state_database_bytes"],
             "operations": len(gateway.operations),
             "events": len(gateway.events),
-            "protected": "替换任务、席位、额度账本和恢复状态持续保留；事件最多 1000 条",
+            "protected": "调度状态、替换任务、席位和额度账本持续保留；运行事件最多 1000 条；代理追踪单独按保留期限及条数清理",
         }
 
     @app.post(prefix + "/settings/storage/cleanup", dependencies=[Depends(auth)])

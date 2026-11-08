@@ -19,3 +19,5 @@ examples/
 
 proxy-lab/
 proxy-lab.zip
+
+config/credentials.json
