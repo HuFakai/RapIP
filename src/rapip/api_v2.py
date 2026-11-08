@@ -573,6 +573,38 @@ def register(app, gateway, auth, operate):
             "probe", {**dict(request.query_params), "since": since, "until": until}, page, page_size
         )
 
+    @app.post(prefix + "/nodes/{node_id}/quality-refresh", dependencies=deps)
+    async def refresh_bound_quality(node_id: str, request: Request):
+        return await operate(
+            request, "bound_quality_refresh", {"node_id": node_id}, lambda: g.quality.refresh_bound(node_id)
+        )
+
+    @app.get(prefix + "/onboarding", dependencies=deps)
+    async def onboarding():
+        nodes = [n for n in g.nodes.values() if n.state != IPState.ARCHIVED]
+        async with g.storage.lock:
+            async with g.storage.db.execute(
+                "SELECT EXISTS(SELECT 1 FROM lifecycle WHERE kind='connected')"
+            ) as cursor:
+                verified = bool((await cursor.fetchone())[0])
+        return {
+            "accounts": len(g.accounts),
+            "enabled_accounts": sum(a.enabled for a in g.accounts.values()),
+            "total_ips": len(nodes),
+            "available_ips": sum(g._fresh_eligible(n) for n in nodes),
+            "bound_ips": sum(n.state in {IPState.IN_USE, IPState.RESERVED} for n in nodes),
+            "quality_groups": len(g.quality.groups) - 1,
+            "verified_connection": verified or bool(g.tunnels),
+            "proxy_host": g.config.public_proxy_host,
+            "socks_port": g.config.public_socks_port or g.config.socks_port,
+            "http_port": g.config.public_http_proxy_port or g.config.proxy_http_port,
+            "probe_enabled": g.config.probe_enabled,
+            "expired_bound_ips": sum(
+                n.state in {IPState.IN_USE, IPState.RESERVED} and g.quality.state(n) == "EXPIRED"
+                for n in nodes
+            ),
+        }
+
     @app.post(prefix + "/nodes/{node_id}/probe", dependencies=deps)
     async def probe(node_id: str, request: Request):
         async def action():

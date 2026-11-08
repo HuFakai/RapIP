@@ -68,8 +68,14 @@ import { Connections } from "./components/operations/Connections";
 import { Lifecycle } from "./components/operations/Lifecycle";
 import { Tasks } from "./components/operations/Tasks";
 import { operation, queryString, type Group } from "./lib/v2";
+import { GuideBanner } from "./components/GuideBanner";
 import { AppearanceSettings } from "./components/AppearanceSettings";
 
+const GettingStarted = lazy(() =>
+  import("./components/GettingStarted").then((m) => ({
+    default: m.GettingStarted,
+  })),
+);
 const Overview = lazy(() =>
   import("./components/operations/Overview").then((m) => ({
     default: m.Overview,
@@ -78,6 +84,7 @@ const Overview = lazy(() =>
 
 type PageId =
   | "overview"
+  | "guide"
   | "bindings"
   | "nodes"
   | "accounts"
@@ -134,6 +141,12 @@ const navigation = [
     label: "任务与事件",
     icon: Activity,
     caption: "追踪换号、补货与状态变化",
+  },
+  {
+    id: "guide",
+    label: "新手引导",
+    icon: CircleHelp,
+    caption: "按步骤接入代理，理解出口、质量与换号",
   },
   {
     id: "settings",
@@ -594,7 +607,10 @@ function BindingsPage({
 function AccountsPage({ notify }: { notify: (message: string) => void }) {
   const query = useQuery<{ items: AccountData[] }>("/accounts");
   const [search, setSearch] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(
+    () =>
+      new URLSearchParams(location.hash.split("?")[1]).get("action") === "add",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<AccountData | null>(null);
@@ -1413,7 +1429,8 @@ function SettingsPage({ notify }: { notify: (message: string) => void }) {
                       <div>
                         <label id="probe-switch-label">主动测活</label>
                         <p>
-                          开启后立即检查未使用节点；关闭停止新测活，不影响已有业务连接。
+                          检查未使用节点，并自动复检临近到期的绑定
+                          IP；关闭停止新的计划检测，已有连接保留，仍可手动复检。
                         </p>
                       </div>
                       <button
@@ -1760,7 +1777,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <Brand />
-            <span className="version-tag">v0.2.14</span>
+            <span className="version-tag">v0.2.15</span>
           </div>
           <div className="workspace-label">WORKSPACE</div>
           <nav aria-label="主导航">
@@ -1870,6 +1887,16 @@ export default function App() {
                   主动测活已关闭；已验证资源仍可使用，新节点保持隔离。
                 </span>
               </div>
+            )}
+            {pageId === "overview" && <GuideBanner />}
+            {pageId === "guide" && (
+              <Suspense fallback={<LoadingState label="正在加载新手引导…" />}>
+                <GettingStarted
+                  key={routeKey}
+                  notify={notify}
+                  onConnect={() => setConnectionOpen(true)}
+                />
+              </Suspense>
             )}
             {pageId === "overview" && (
               <Suspense

@@ -19,7 +19,7 @@ const text: Record<string, string> = {
   FAIL: "质量不合格",
   UNKNOWN: "证据不足",
   ERROR: "检测异常",
-  EXPIRED: "已过期",
+  EXPIRED: "质量待复检",
   PENDING: "待检测",
   BASIC: "基础准入",
   RESERVED: "已预留·待连接",

@@ -197,7 +197,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.14", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.15", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -407,7 +407,23 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 if row.get("binding_id") in gateway.bindings
                 else None
             )
-            row["quality"] = {**row["quality"], "state": gateway.quality.state(gateway.nodes[row["id"]])}
+            node = gateway.nodes[row["id"]]
+            quality_state = gateway.quality.state(node)
+            row["quality"] = {
+                **row["quality"],
+                "state": quality_state,
+                "refreshing": node.id in gateway.quality.bound_refreshing,
+                "auto_refresh": config.probe_enabled
+                and gateway.quality.groups.get(node.group_id, {}).get("enabled", False),
+                "binding_preserved": node.state in {IPState.IN_USE, IPState.RESERVED},
+                "expiry_reason": (
+                    "检测结果超过有效期"
+                    if node.quality.get("expires_at", 0) <= time.time()
+                    else "分组规则或检测源配置已更新"
+                )
+                if quality_state == "EXPIRED"
+                else "",
+            }
 
         def key(row):
             value = row.get(sort)
@@ -700,7 +716,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "tunnel_idle_timeout": 0,
                 "session_expires": False,
                 "fault_failover": "由质量组决定，默认关闭",
-                "version": "0.2.14",
+                "version": "0.2.15",
             },
         }
 

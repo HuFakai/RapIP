@@ -163,6 +163,24 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
     setSort(value);
     setPage(1);
   }
+  async function refreshBound(node: NodeData) {
+    setBusy(node.id);
+    notify("正在刷新质量结果；保留当前 IP、工位和 session，不提交换号");
+    try {
+      const result = await operation(`/nodes/${node.id}/quality-refresh`);
+      const state = (result.quality as { state?: string })?.state;
+      notify(
+        state === "PASS"
+          ? "质量复检通过，当前绑定保持不变"
+          : "复检结果未确认合格，当前绑定仍保留；稍后自动重试",
+      );
+      refreshAll();
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
   async function probe(node: NodeData) {
     setBusy(node.id);
     notify("正在执行只读探测，不调用 Replace");
@@ -255,7 +273,18 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
             <option value="">全部质量结论</option>
             {["PASS", "FAIL", "UNKNOWN", "EXPIRED", "PENDING", "BASIC"].map(
               (v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>
+                  {
+                    {
+                      PASS: "质量通过",
+                      FAIL: "质量不合格",
+                      UNKNOWN: "证据不足",
+                      EXPIRED: "质量待复检",
+                      PENDING: "待检测",
+                      BASIC: "基础准入",
+                    }[v]
+                  }
+                </option>
               ),
             )}
           </select>
@@ -454,6 +483,21 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                         (n.group_id === "default" ? "BASIC" : "PENDING")
                       }
                     />
+                    {n.quality.refreshing ? (
+                      <small className="node-quality-hint">
+                        正在复检 · 不换 IP
+                      </small>
+                    ) : n.quality.state === "EXPIRED" ? (
+                      <small
+                        className="node-quality-hint"
+                        title={`${n.quality.expiry_reason ?? "质量结果待更新"}；检测有效期不是 IP / session 有效期`}
+                      >
+                        {n.quality.binding_preserved
+                          ? "原绑定保留 · "
+                          : "待分配前需复检 · "}
+                        {n.quality.auto_refresh ? "等待自动复检" : "可手动复检"}
+                      </small>
+                    ) : null}
                   </td>
                 )}
                 {has("latency") && (
@@ -549,6 +593,18 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                       <FlaskConical size={13} />
                       质量
                     </Button>
+                    {["IN_USE", "RESERVED"].includes(n.state) &&
+                      n.group_id !== "default" && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={!!busy || n.quality.refreshing}
+                          onClick={() => void refreshBound(n)}
+                          title="只刷新质量结果，不更换 IP，不打断现有连接"
+                        >
+                          {n.quality.refreshing ? "复检中" : "复检"}
+                        </Button>
+                      )}
                     <Button
                       variant="secondary"
                       size="sm"
@@ -630,6 +686,13 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                 {current.connections} / {current.worker ?? "—"}
               </dd>
             </dl>
+            {current.quality.state === "EXPIRED" && (
+              <p className="ops-warning">
+                这是质量检测结果需要更新，不是 IP 或 session
+                到期。当前已绑定出口会保留；开启主动测活后自动复检，也可以使用行内“复检”。
+                <a href="#guide?step=quality">查看说明</a>
+              </p>
+            )}
             {current.quality.state === "UNKNOWN" && (
               <p className="field-help">
                 证据不足表示检测结果尚未确认，不等于质量不合格；不会仅凭这个状态自动更换

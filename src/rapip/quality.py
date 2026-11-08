@@ -158,6 +158,7 @@ class QualityManager:
         self.global_daily_limit = 20
         self.busy = set()
         self.running = set()
+        self.bound_refreshing = set()
         self.cache = {}
         self.source_locks = {"ipinfo": asyncio.Lock(), "abuseipdb": asyncio.Lock()}
         self.semaphore = asyncio.Semaphore(3)
@@ -615,6 +616,106 @@ class QualityManager:
                 data["abuseipdb"] = await self.fetch_source("abuseipdb", node.ip, policy.ttl_hours * 3600)
             return data
 
+    def bound_identity(self, node):
+        binding = self.g.bindings.get(node.binding_id)
+        group = self.groups.get(node.group_id, {})
+        return (
+            node.ip,
+            node.membership_version,
+            node.group_id,
+            group.get("version"),
+            self.source_revision,
+            node.binding_id,
+            binding.generation if binding else None,
+            binding.session if binding else None,
+        )
+
+    async def refresh_bound(self, node_id, automatic=False):
+        """Refresh evidence only. Never release, switch, quarantine or replace a bound exit."""
+        g = self.g
+        async with g.changed:
+            g._writable()
+            node = g.nodes.get(node_id)
+            binding = g.bindings.get(node.binding_id) if node else None
+            group = self.groups.get(node.group_id, {}) if node else {}
+            if (
+                not node
+                or node.state not in {IPState.IN_USE, IPState.RESERVED}
+                or node.group_id == "default"
+                or not group.get("enabled")
+                or not binding
+                or binding.released
+                or binding.node_id != node.id
+                or binding.id in g.dynamic.pending
+                or node.replacement_error
+            ):
+                raise GatewayError("NODE_BUSY", "请选择正常绑定且已启用质量分组的 IP")
+            if node_id in self.busy or node_id in g.probing:
+                raise GatewayError("QUALITY_BUSY", "这个 IP 正在检测，请稍后查看结果")
+            identity = self.bound_identity(node)
+            policy = QualityPolicy(**group["policy"])
+            previous = self.state(node)
+            self.busy.add(node_id)
+            self.bound_refreshing.add(node_id)
+        try:
+            try:
+                evidence = await self.evidence(copy.copy(node), policy)
+            except Exception:
+                evidence = {"network": {"error": "复检暂不可用，原绑定保留"}}
+            now = time.time()
+            decision = evaluate(policy, evidence)
+            verdict = {
+                **decision,
+                "evidence": evidence,
+                "checked_at": now,
+                "expires_at": min(
+                    [now + policy.ttl_hours * 3600]
+                    + [
+                        v["checked_at"] + policy.ttl_hours * 3600
+                        for v in evidence.values()
+                        if isinstance(v, dict) and "checked_at" in v
+                    ]
+                ),
+                "version": identity[3],
+                "source_revision": identity[4],
+                "node_id": node.id,
+                "ip": node.ip,
+                "bound_refresh": True,
+                "refresh_retry_at": now + (300 if decision["state"] == "PASS" else 900),
+            }
+            async with g.changed:
+                g._writable()
+                if (
+                    self.bound_identity(node) != identity
+                    or node.state not in {IPState.IN_USE, IPState.RESERVED}
+                    or binding.released
+                    or binding.node_id != node.id
+                    or binding.id in g.dynamic.pending
+                    or not self.groups.get(node.group_id, {}).get("enabled")
+                ):
+                    raise GatewayError("VERSION_CONFLICT", "复检期间绑定或分组规则已变化，已丢弃旧结果")
+                node.quality, node.checked_at = verdict, now
+                net = evidence.get("network", {})
+                node.latency_ms = net.get("max_latency_ms", node.latency_ms)
+                if net.get("successes"):
+                    node.last_success_at = now
+                g.lifecycle.add(
+                    "quality_refreshed",
+                    node=node,
+                    binding=binding,
+                    status=verdict["state"],
+                    previous_quality=previous,
+                    reason="；".join(verdict["reasons"]),
+                    source="automatic" if automatic else "manual",
+                    binding_preserved=True,
+                )
+                await g._persist()
+                g.changed.notify_all()
+            return {"quality": verdict, "binding_preserved": True, "replacement_submitted": False}
+        finally:
+            self.busy.discard(node_id)
+            self.bound_refreshing.discard(node_id)
+
     async def run(self, group_id, node_ids=None, policy_override=None, preview=False, allow_replace=True):
         group = self.groups.get(group_id)
         if not group:
@@ -829,6 +930,33 @@ class QualityManager:
                         changed = True
             if changed:
                 await self.g._persist()
+        # Refresh retained exits without running the pool admission / replacement path.
+        if self.g.config.probe_enabled:
+            now = time.time()
+            scheduled = 0
+            for node in list(self.g.nodes.values()):
+                group = self.groups.get(node.group_id, {})
+                binding = self.g.bindings.get(node.binding_id)
+                if (
+                    node.group_id != "default"
+                    and group.get("enabled")
+                    and node.state in {IPState.IN_USE, IPState.RESERVED}
+                    and binding
+                    and not binding.released
+                    and binding.node_id == node.id
+                    and binding.id not in self.g.dynamic.pending
+                    and node.id not in self.busy
+                    and node.id not in self.g.probing
+                    and not node.replacement_error
+                    and node.quality.get("refresh_retry_at", 0) <= now
+                    and (not self.eligible(node) or node.quality.get("expires_at", 0) <= now + 300)
+                ):
+                    # Set a lease before spawning so repeated ticks do not queue duplicate checks.
+                    node.quality["refresh_retry_at"] = now + 900
+                    self.g.spawn(self.refresh_bound(node.id, automatic=True), "bound-quality-refresh")
+                    scheduled += 1
+                    if scheduled >= 3:
+                        break
         for group in list(self.groups.values()):
             if group["id"] == "default" or not group["enabled"] or group["id"] in self.running:
                 continue

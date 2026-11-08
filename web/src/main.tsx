@@ -5,6 +5,7 @@ import { applyTheme, readTheme } from "./lib/theme";
 import "./style.css";
 import "./experience.css";
 import "./trace.css";
+import "./guide.css";
 
 applyTheme(readTheme());
 try {

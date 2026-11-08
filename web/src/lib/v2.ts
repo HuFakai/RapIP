@@ -70,6 +70,11 @@ export interface Group {
   running: boolean;
 }
 export interface QualityResult {
+  refreshing?: boolean;
+  auto_refresh?: boolean;
+  binding_preserved?: boolean;
+  expiry_reason?: string;
+  refresh_retry_at?: number;
   state: string;
   reasons: string[];
   checked_at?: number;

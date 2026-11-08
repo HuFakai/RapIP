@@ -49,6 +49,7 @@ export const labels: Record<string, string> = {
   group_members: "调整组成员",
   group_delete: "删除资源组",
   quality_preview: "只读质量预览",
+  bound_quality_refresh: "绑定 IP 质量复检",
   quality_check: "质量筛查准入",
   quality_round: "新筛选轮次",
   ipquality_report: "IPQuality 质量报告",

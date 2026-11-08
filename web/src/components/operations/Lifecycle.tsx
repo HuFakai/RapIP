@@ -338,6 +338,13 @@ function describe(e: Entry): [string, string, string] {
         ]
       );
     }
+    case "quality_refreshed":
+      return [
+        e.status === "PASS" ? "绑定 IP 质量复检通过" : "绑定 IP 质量复检待确认",
+        "只更新质量结果；当前 IP、worker 和 session 保留，没有提交 Webshare 换号。" +
+          (e.reason ? ` ${e.reason}` : ""),
+        e.status === "PASS" ? "good" : "warn",
+      ];
     case "replacement_blocked":
       if (["IN_USE", "RESERVED"].includes(e.status ?? "")) {
         return [
