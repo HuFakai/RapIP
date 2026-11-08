@@ -339,6 +339,13 @@ function describe(e: Entry): [string, string, string] {
       );
     }
     case "replacement_blocked":
+      if (["IN_USE", "RESERVED"].includes(e.status ?? "")) {
+        return [
+          "替换未提交，原绑定保留",
+          "预检未通过，没有提交真实换号；当前 worker 和 session 继续使用原 IP。",
+          "warn",
+        ];
+      }
       return [
         "补货已停止，旧 IP 保留",
         e.attempt === 0
