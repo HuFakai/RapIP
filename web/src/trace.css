@@ -1161,3 +1161,35 @@
     width: auto;
   }
 }
+
+.journey-ip.is-match {
+  background: color-mix(in srgb, var(--status-warn) 20%, var(--panel));
+  border: 1px solid var(--status-warn);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-warn) 12%, transparent);
+}
+.journey-ip.is-match a,
+.journey-ip.is-match code {
+  color: var(--status-warn);
+  font-weight: 750;
+}
+.journey-row.is-located {
+  scroll-margin-block: 90px;
+  outline: none;
+}
+.journey-row.is-located > .journey-card {
+  border-color: color-mix(in srgb, var(--status-warn) 60%, var(--line));
+  background: color-mix(in srgb, var(--status-warn) 4%, var(--panel));
+}
+.journey-located-label {
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--status-warn);
+  border: 1px solid color-mix(in srgb, var(--status-warn) 35%, var(--line));
+}
+.journey-controls {
+  flex-wrap: wrap;
+}
+.journey-controls > span {
+  margin-right: auto;
+}

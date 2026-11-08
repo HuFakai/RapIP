@@ -185,7 +185,9 @@ class Storage:
                         changes.append({k: event[k] for k in ("slot_id", "ip", "new_ip", "at", "group_id")})
         return slots, changes
 
-    async def chains(self, view, filters, offset, size, cutoff, timeline=False, ascending=False):
+    async def chains(
+        self, view, filters, offset, size, cutoff, timeline=False, ascending=False, locate_ip=""
+    ):
         # Match filters against individual events, then fetch the entire matched chain.
         where, values = self.history_filter(view, filters, cutoff)
         cte = (
@@ -226,7 +228,24 @@ class Storage:
         )
         if timeline:
             direction = "ASC" if ascending else "DESC"
+            location = None
             async with self.lock:
+                if locate_ip:
+                    async with self.db.execute(
+                        cte
+                        + f""", ordered AS (
+                            SELECT k.id,k.at,k.payload,
+                            row_number() OVER (ORDER BY k.at {direction},k.id {direction})-1 AS position
+                            FROM keyed k JOIN matched m ON k.chain=m.chain)
+                        SELECT id,position FROM ordered
+                        WHERE ? IN (json_extract(payload,'$.ip'),json_extract(payload,'$.old_ip'),
+                                    json_extract(payload,'$.new_ip'))
+                        ORDER BY at DESC,id DESC LIMIT 1""",
+                        [cutoff, *values, locate_ip],
+                    ) as cur:
+                        if found := await cur.fetchone():
+                            offset = (found[1] // size) * size
+                            location = {"event_id": found[0], "page": offset // size + 1, "ip": locate_ip}
                 async with self.db.execute(
                     cte + "SELECT count(*) FROM keyed k JOIN matched m ON k.chain=m.chain",
                     [cutoff, *values],
@@ -271,7 +290,7 @@ class Storage:
                             "old_country",
                         )
                     }
-            return entries, total
+            return entries, total, location
         async with self.lock:
             async with self.db.execute(cte + "SELECT count(*) FROM ranked", [cutoff, *values]) as cur:
                 total = (await cur.fetchone())[0]

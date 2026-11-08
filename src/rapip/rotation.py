@@ -385,6 +385,8 @@ class RotationManager:
         ):
             raise GatewayError("NODE_BUSY", "资源不存在、正在检测或替换，请稍后重试")
         binding = g.bindings.get(node.binding_id)
+        if binding and binding.node_id != node.id:
+            binding = None
         if binding:
             g.dynamic.reject_control(binding)
         if binding and not binding.released and body.bound_action == "reject":

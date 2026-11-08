@@ -28,6 +28,7 @@ const text: Record<string, string> = {
   DRAINING: "排空中",
   QUARANTINED: "隔离",
   REPLACING: "替换中",
+  REPLACEMENT_BLOCKED: "补货失败",
   success: "建立成功",
   authentication_rejected: "认证拒绝",
   protocol_error: "协议错误",
@@ -40,7 +41,7 @@ const text: Record<string, string> = {
 export function Status({ state }: { state: string }) {
   return (
     <span
-      className={`ops-status tone-${["healthy", "PASS", "success"].includes(state) ? "good" : ["FAIL", "ERROR", "upstream_transport", "upstream_target", "authentication_rejected", "upstream_authentication", "protocol_error"].includes(state) ? "bad" : ["BINDING_CONNECTION_LIMIT", "GATEWAY_CONNECTION_LIMIT", "ADMISSION_LIMIT", "SESSION_RETIRED", "EXIT_UNAVAILABLE", "UNKNOWN", "EXPIRED", "QUARANTINED", "POOL_EXHAUSTED", "DRAINING", "CONNECTION_LIMIT", "unsupported_command", "upstream_command"].includes(state) ? "warn" : ["IN_USE", "RESERVED", "REPLACING"].includes(state) ? "active" : state === "FRESH" || state === "BASIC" ? "ready" : "neutral"}`}
+      className={`ops-status tone-${["healthy", "PASS", "success"].includes(state) ? "good" : ["FAIL", "ERROR", "upstream_transport", "upstream_target", "authentication_rejected", "upstream_authentication", "protocol_error"].includes(state) ? "bad" : ["REPLACEMENT_BLOCKED", "BINDING_CONNECTION_LIMIT", "GATEWAY_CONNECTION_LIMIT", "ADMISSION_LIMIT", "SESSION_RETIRED", "EXIT_UNAVAILABLE", "UNKNOWN", "EXPIRED", "QUARANTINED", "POOL_EXHAUSTED", "DRAINING", "CONNECTION_LIMIT", "unsupported_command", "upstream_command"].includes(state) ? "warn" : ["IN_USE", "RESERVED", "REPLACING"].includes(state) ? "active" : state === "FRESH" || state === "BASIC" ? "ready" : "neutral"}`}
     >
       {text[state] || state}
     </span>

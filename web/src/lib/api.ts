@@ -168,6 +168,7 @@ export interface Paged<T> {
   page_size: number;
 }
 export interface NodeData {
+  replacement_error?: string;
   binding_id?: string | null;
   group_id: string;
   slot_id: string;

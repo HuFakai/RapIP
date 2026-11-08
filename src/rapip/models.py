@@ -93,6 +93,7 @@ class Node:
     quality: dict = field(default_factory=dict)
     latency_ms: float | None = None
     last_success_at: float | None = None
+    replacement_error: str = ""
 
     def public(self) -> dict:
         return {k: v for k, v in asdict(self).items() if k not in {"username", "password"}}

@@ -1,4 +1,11 @@
-import { useState, type FormEvent } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -48,6 +55,7 @@ interface Entry {
   release_action?: string;
   resource_action?: string;
   quality_state?: string;
+  attempt?: number;
   successes?: number;
   samples?: number;
   fallback_reason?: string;
@@ -72,6 +80,7 @@ interface Path {
     state: string;
     group_id: string;
     country?: string;
+    replacement_error?: string;
   } | null;
   changes: { ip: string; new_ip: string; at: number }[];
 }
@@ -84,7 +93,13 @@ interface Focus {
   status: string;
   group_id: string;
 }
-type Result = Paged<Entry> & { paths?: Path[]; focus?: Focus | null };
+type Result = Paged<Entry> & {
+  paths?: Path[];
+  focus?: Focus | null;
+  location_checked?: boolean;
+  anchor?: { event_id: string; page: number; ip: string } | null;
+};
+const SearchedIP = createContext("");
 const stateNames: Record<string, string> = {
   FRESH: "待分配",
   IN_USE: "使用中",
@@ -105,8 +120,13 @@ function IP({
   country?: string;
   slot?: string;
 }) {
+  const searched = useContext(SearchedIP);
+  const matched = !!ip && ip === searched;
   return (
-    <span className="journey-ip">
+    <span
+      className={`journey-ip${matched ? " is-match" : ""}`}
+      data-match-ip={matched ? ip : undefined}
+    >
       <CountryFlag code={country ?? null} />
       <b>{country || "国家未记录"}</b>
       {ip ? (
@@ -318,11 +338,27 @@ function describe(e: Entry): [string, string, string] {
         ]
       );
     }
+    case "replacement_blocked":
+      return [
+        "补货已停止，旧 IP 保留",
+        e.attempt === 0
+          ? "预检未通过，未提交真实换号。旧 IP 暂停分配，可手动重试补货；当前正在使用的新出口不受影响。"
+          : "更换任务已失败，旧 IP 暂停分配，请核对供应商结果后再操作。",
+        "warn",
+      ];
     default:
       return ["资源状态有更新", e.reason ?? e.kind, "info"];
   }
 }
-function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
+function EventRow({
+  entry: e,
+  number,
+  located,
+}: {
+  entry: Entry;
+  number: number;
+  located?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [title, body, tone] = describe(e);
   const worker = e.worker;
@@ -333,7 +369,11 @@ function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
       : "";
   const origin = e.old_ip && e.old_ip !== e.ip ? e.old_ip : "";
   return (
-    <li className={`journey-row tone-${tone}`}>
+    <li
+      id={`journey-${e.id}`}
+      tabIndex={-1}
+      className={`journey-row tone-${tone}${located ? " is-located" : ""}`}
+    >
       <div className="journey-time">
         <time>{date(e.at)}</time>
         <span>事件 {number}</span>
@@ -344,6 +384,9 @@ function EventRow({ entry: e, number }: { entry: Entry; number: number }) {
       <article className="journey-card">
         <header>
           <strong>{title}</strong>
+          {located && (
+            <span className="journey-located-label">目标 IP 最近事件</span>
+          )}
           <GroupLabel
             id={e.group_id}
             historicalName={e.group_name}
@@ -482,12 +525,18 @@ export function Lifecycle() {
   const [draft, setDraft] = useState(q),
     [page, setPage] = useState(1);
   const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const [locating, setLocating] = useState(
+    view === "ips" && /^\d{1,3}(\.\d{1,3}){3}$/.test(q),
+  );
+  const [targetId, setTargetId] = useState("");
+  const scrolled = useRef(false);
   const size = 25;
   const groups = useQuery<{ items: Group[] }>("/groups", true, 15000);
   const query = useQuery<Result>(
     "/lifecycle/chains?" +
       queryString({
         event_view: true,
+        locate: locating,
         view,
         group_id: group,
         binding_id: binding,
@@ -502,9 +551,37 @@ export function Lifecycle() {
     true,
     3000,
   );
+  useEffect(() => {
+    if (!locating || !query.data?.location_checked) return;
+    const anchor = query.data.anchor;
+    setTargetId(anchor?.event_id ?? "");
+    setPage(anchor?.page ?? 1);
+    setLocating(false);
+  }, [locating, query.data]);
+  useEffect(() => {
+    if (
+      locating ||
+      !targetId ||
+      scrolled.current ||
+      query.data?.location_checked
+    )
+      return;
+    if (!query.data?.items.some((e) => e.id === targetId)) return;
+    const element = document.getElementById(`journey-${targetId}`);
+    if (!element) return;
+    element.scrollIntoView({ block: "center", behavior: "instant" });
+    element.focus({ preventScroll: true });
+    scrolled.current = true;
+  }, [locating, targetId, query.data]);
   function search(e: FormEvent) {
     e.preventDefault();
     const value = draft.trim();
+    if (value === q && view === "ips") {
+      scrolled.current = false;
+      setTargetId("");
+      setLocating(true);
+      return;
+    }
     location.hash = href({
       view: /^\d{1,3}(\.\d{1,3}){3}$/.test(value) ? "ips" : view,
       group_id: group,
@@ -514,187 +591,213 @@ export function Lifecycle() {
   const paths = query.data?.paths ?? [],
     focus = query.data?.focus;
   return (
-    <section className="journey-page">
-      <div className="surface trace-toolbar">
-        <nav aria-label="追踪对象">
+    <SearchedIP.Provider value={view === "ips" ? q : ""}>
+      <section className="journey-page">
+        <div className="surface trace-toolbar">
+          <nav aria-label="追踪对象">
+            <Button
+              asChild
+              size="sm"
+              variant={view === "links" ? "default" : "secondary"}
+            >
+              <a href={href({ view: "links", group_id: group })}>
+                <GitBranch size={14} />
+                链接使用过程
+              </a>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              variant={view === "ips" ? "default" : "secondary"}
+            >
+              <a href={href({ view: "ips", group_id: group })}>
+                <Layers3 size={14} />
+                IP 使用与更换
+              </a>
+            </Button>
+          </nav>
+          <form onSubmit={search}>
+            <select
+              aria-label="追踪分组"
+              value={group}
+              onChange={(e) => {
+                location.hash = href({ view, group_id: e.target.value, q });
+              }}
+            >
+              <option value="">全部分组</option>
+              {groups.data?.items.map((g) => (
+                <option value={g.id} key={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="搜索 IP、工位或 session"
+              placeholder="输入 IP、工位或 session"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              maxLength={128}
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              type="submit"
+              aria-label="查询"
+            >
+              <Search size={14} />
+            </Button>
+          </form>
+          <span className="trace-live">
+            <Radio size={13} />
+            {query.error ? "更新暂停" : "实时更新"}
+          </span>
+        </div>
+        {(q || slot || binding || worker || job) && (
+          <aside className="surface journey-focus">
+            <header>
+              <Layers3 size={15} />
+              <strong>
+                {q
+                  ? `IP / 关键词：${q}`
+                  : worker
+                    ? `工位 ${worker} 的使用过程`
+                    : binding
+                      ? "这次链接绑定的完整过程"
+                      : job
+                        ? "这项 Webshare 更换任务"
+                        : "该 IP 席位的完整过程"}
+              </strong>
+              <a href={href({ view, group_id: group })}>清除筛选</a>
+            </header>
+            {focus && (
+              <p>
+                当前{focus.status === "RELEASED" ? "已释放" : "绑定"} · session{" "}
+                <code>{focus.session}</code>
+                {focus.ip && (
+                  <>
+                    {" "}
+                    · 出口 <IP ip={focus.ip} country={focus.exit_country} />
+                  </>
+                )}
+              </p>
+            )}
+            {paths.map((p) => (
+              <div className="journey-focus-path" key={p.slot_id}>
+                <b>当前资源</b>
+                {p.current ? (
+                  <>
+                    <IP
+                      ip={p.current.ip}
+                      country={p.current.country}
+                      slot={p.slot_id}
+                    />
+                    <span>
+                      {p.current.replacement_error
+                        ? "补货失败，旧 IP 保留"
+                        : (stateNames[p.current.state] ?? p.current.state)}
+                    </span>
+                  </>
+                ) : (
+                  <span>原 IP 已退役，未确认当前资源</span>
+                )}
+                {!!p.changes.length && (
+                  <details>
+                    <summary>
+                      已确认的 Webshare 换号（{p.changes.length} 次）
+                    </summary>
+                    <ul>
+                      {p.changes.map((c) => (
+                        <li key={c.at}>
+                          <time>{date(c.at)}</time>
+                          <code>{c.ip}</code>
+                          <ArrowRight size={12} />
+                          <code>{c.new_ip}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            ))}
+            <small>
+              下面按实际记录讲述发生的事；新出口获配和旧 IP
+              补货会分别说明。没有记录的信息显示“未记录”，不会补造。
+            </small>
+          </aside>
+        )}
+        <div className="journey-controls">
+          <span>
+            <Clock3 size={13} />
+            {query.data?.total ?? "—"} 个事件
+          </span>
+          {view === "ips" && q && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={locating}
+              onClick={() => {
+                scrolled.current = false;
+                setTargetId("");
+                setLocating(true);
+              }}
+            >
+              定位目标 IP 最近事件
+            </Button>
+          )}
           <Button
-            asChild
             size="sm"
-            variant={view === "links" ? "default" : "secondary"}
-          >
-            <a href={href({ view: "links", group_id: group })}>
-              <GitBranch size={14} />
-              链接使用过程
-            </a>
-          </Button>
-          <Button
-            asChild
-            size="sm"
-            variant={view === "ips" ? "default" : "secondary"}
-          >
-            <a href={href({ view: "ips", group_id: group })}>
-              <Layers3 size={14} />
-              IP 使用与更换
-            </a>
-          </Button>
-        </nav>
-        <form onSubmit={search}>
-          <select
-            aria-label="追踪分组"
-            value={group}
-            onChange={(e) => {
-              location.hash = href({ view, group_id: e.target.value, q });
+            variant="secondary"
+            onClick={() => {
+              setOrder(order === "asc" ? "desc" : "asc");
+              setPage(1);
             }}
           >
-            <option value="">全部分组</option>
-            {groups.data?.items.map((g) => (
-              <option value={g.id} key={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-          <input
-            aria-label="搜索 IP、工位或 session"
-            placeholder="输入 IP、工位或 session"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            maxLength={128}
-          />
-          <Button size="sm" variant="secondary" type="submit" aria-label="查询">
-            <Search size={14} />
+            {order === "asc" ? <ArrowDown size={13} /> : <ArrowUp size={13} />}{" "}
+            {order === "asc" ? "从头看 · 按发生顺序" : "看最新 · 新事件在上"}
           </Button>
-        </form>
-        <span className="trace-live">
-          <Radio size={13} />
-          {query.error ? "更新暂停" : "实时更新"}
-        </span>
-      </div>
-      {(q || slot || binding || worker || job) && (
-        <aside className="surface journey-focus">
-          <header>
-            <Layers3 size={15} />
-            <strong>
-              {q
-                ? `IP / 关键词：${q}`
-                : worker
-                  ? `工位 ${worker} 的使用过程`
-                  : binding
-                    ? "这次链接绑定的完整过程"
-                    : job
-                      ? "这项 Webshare 更换任务"
-                      : "该 IP 席位的完整过程"}
-            </strong>
-            <a href={href({ view, group_id: group })}>清除筛选</a>
-          </header>
-          {focus && (
-            <p>
-              当前{focus.status === "RELEASED" ? "已释放" : "绑定"} · session{" "}
-              <code>{focus.session}</code>
-              {focus.ip && (
-                <>
-                  {" "}
-                  · 出口 <IP ip={focus.ip} country={focus.exit_country} />
-                </>
-              )}
-            </p>
-          )}
-          {paths.map((p) => (
-            <div className="journey-focus-path" key={p.slot_id}>
-              <b>当前资源</b>
-              {p.current ? (
-                <>
-                  <IP
-                    ip={p.current.ip}
-                    country={p.current.country}
-                    slot={p.slot_id}
-                  />
-                  <span>{stateNames[p.current.state] ?? p.current.state}</span>
-                </>
-              ) : (
-                <span>原 IP 已退役，未确认当前资源</span>
-              )}
-              {!!p.changes.length && (
-                <details>
-                  <summary>
-                    已确认的 Webshare 换号（{p.changes.length} 次）
-                  </summary>
-                  <ul>
-                    {p.changes.map((c) => (
-                      <li key={c.at}>
-                        <time>{date(c.at)}</time>
-                        <code>{c.ip}</code>
-                        <ArrowRight size={12} />
-                        <code>{c.new_ip}</code>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </div>
+        </div>
+        <ErrorMessage message={query.error} />
+        {query.isLoading && <LoadingState label="正在还原使用过程…" />}
+        {!query.isLoading && query.data?.items.length === 0 && (
+          <p className="surface ops-empty">还没有符合条件的事件。</p>
+        )}
+        <ol className="journey-timeline">
+          {query.data?.items.map((e, i) => (
+            <EventRow
+              key={e.id}
+              entry={e}
+              located={targetId === e.id}
+              number={
+                order === "asc"
+                  ? (page - 1) * size + i + 1
+                  : (query.data?.total ?? 0) - (page - 1) * size - i
+              }
+            />
           ))}
-          <small>
-            下面按实际记录讲述发生的事；新出口获配和旧 IP
-            补货会分别说明。没有记录的信息显示“未记录”，不会补造。
-          </small>
-        </aside>
-      )}
-      <div className="journey-controls">
-        <span>
-          <Clock3 size={13} />
-          {query.data?.total ?? "—"} 个事件
-        </span>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            setOrder(order === "asc" ? "desc" : "asc");
-            setPage(1);
-          }}
-        >
-          {order === "asc" ? <ArrowDown size={13} /> : <ArrowUp size={13} />}{" "}
-          {order === "asc" ? "从头看 · 按发生顺序" : "看最新 · 新事件在上"}
-        </Button>
-      </div>
-      <ErrorMessage message={query.error} />
-      {query.isLoading && <LoadingState label="正在还原使用过程…" />}
-      {!query.isLoading && query.data?.items.length === 0 && (
-        <p className="surface ops-empty">还没有符合条件的事件。</p>
-      )}
-      <ol className="journey-timeline">
-        {query.data?.items.map((e, i) => (
-          <EventRow
-            key={e.id}
-            entry={e}
-            number={
-              order === "asc"
-                ? (page - 1) * size + i + 1
-                : (query.data?.total ?? 0) - (page - 1) * size - i
-            }
-          />
-        ))}
-      </ol>
-      <div className="ops-pager">
-        <span>每页 {size} 个事件</span>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={page === 1}
-          onClick={() => setPage(page - 1)}
-        >
-          上一页
-        </Button>
-        <span>
-          {page} / {Math.max(1, Math.ceil((query.data?.total ?? 0) / size))}
-        </span>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={!query.data || page * size >= query.data.total}
-          onClick={() => setPage(page + 1)}
-        >
-          下一页
-        </Button>
-      </div>
-    </section>
+        </ol>
+        <div className="ops-pager">
+          <span>每页 {size} 个事件</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={page === 1}
+            onClick={() => setPage(page - 1)}
+          >
+            上一页
+          </Button>
+          <span>
+            {page} / {Math.max(1, Math.ceil((query.data?.total ?? 0) / size))}
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!query.data || page * size >= query.data.total}
+            onClick={() => setPage(page + 1)}
+          >
+            下一页
+          </Button>
+        </div>
+      </section>
+    </SearchedIP.Provider>
   );
 }

@@ -160,6 +160,7 @@ class Gateway:
                         node.state, node.reason = IPState.QUARANTINED, job.error
                 if job.state == "SUBMITTING":
                     job.state, job.error = "UNCERTAIN", "提交结果不明；需对账，禁止自动重复提交"
+            self._recover_failed_replacements()
             for node in self.nodes.values():
                 if node.state == IPState.DRAINING:
                     if node.id in self.returning:
@@ -281,9 +282,52 @@ class Gateway:
             "settings": {**self.settings.public(), "probe_enabled": self.config.probe_enabled},
         }
 
+    def _recover_failed_replacements(self):
+        """A terminal job cannot keep an orphan resource marked as actively replacing."""
+        jobs_by_node = {}
+        for job in self.replacements.values():
+            jobs_by_node.setdefault(job.node_id, []).append(job)
+        for node in self.nodes.values():
+            if node.state != IPState.REPLACING:
+                continue
+            jobs = jobs_by_node.get(node.id, [])
+            if not jobs or any(j.state not in {"FAILED", "COMPLETED", "CANCELLED"} for j in jobs):
+                continue
+            job = max(jobs, key=lambda j: j.created_at)
+            if job.state != "FAILED" or self.dynamic.active_for_job(job):
+                continue
+            if not job.attempts and not job.provider_id:
+                reservation = self.rotation.ledger.get(job.reservation_id)
+                if reservation and reservation["state"] == "RESERVED":
+                    reservation["state"] = "CANCELLED"
+            binding = self.bindings.get(node.binding_id)
+            bound = binding and not binding.released and binding.node_id == node.id
+            if not job.attempts and not job.provider_id and bound:
+                node.state = IPState.RESERVED if binding.reserved else IPState.IN_USE
+                node.replacement_error = ""
+                binding.unavailable = ""
+                node.reason = "替换未提交，原 IP 与绑定保留"
+                self.blacklist.pop(node.ip, None)
+            else:
+                node.state = IPState.QUARANTINED
+                node.replacement_error = job.error or "替换任务失败，请核对后手动重试"
+                node.reason = "补货失败，旧 IP 保留；" + node.replacement_error
+                if not bound:
+                    node.binding_id = None
+            self.lifecycle.add(
+                "replacement_blocked",
+                node=node,
+                job_id=job.id,
+                reason=job.error,
+                status=node.state,
+                attempt=job.attempts,
+                chain_id=self.lifecycle.related.get(node.id),
+            )
+
     async def _persist(self):
         if self.storage_failed:
             raise GatewayError("STORAGE_UNAVAILABLE", "持久化不可用，已停止新的状态变更", 503)
+        self._recover_failed_replacements()
         self.lifecycle.collect_jobs()
         rows, self.lifecycle.pending = self.lifecycle.pending, []
         cutoff, self.lifecycle.cutoff = self.lifecycle.cutoff, None
@@ -489,6 +533,7 @@ class Gateway:
             self.blacklist.get(node.ip, 0), time.time() + self.settings.blacklist_ttl
         )
         if replace:
+            node.replacement_error = ""
             node.state = IPState.REPLACING
             self.quality.ensure_node(node)
             job = Replacement(
@@ -1055,7 +1100,7 @@ class Gateway:
                     node.state = IPState.RESERVED if binding.reserved else IPState.IN_USE
                     node.reason = "原出口重新出现，恢复保留绑定"
                     binding.unavailable = ""
-            if node.state == IPState.QUARANTINED and not node.used:
+            if node.state == IPState.QUARANTINED and not node.used and not node.replacement_error:
                 if not self.config.probe_enabled:
                     node.reason = "尚未验证（当前部署暂停主动测活）"
                 candidates.append(node.id)
@@ -1104,7 +1149,11 @@ class Gateway:
                 async with self.changed:
                     if not self.config.probe_enabled:
                         return
-                    if node.state not in {IPState.FRESH, IPState.QUARANTINED} or node.used:
+                    if (
+                        node.state not in {IPState.FRESH, IPState.QUARANTINED}
+                        or node.used
+                        or node.replacement_error
+                    ):
                         return
                     collision = self.blacklist.get(node.ip, 0) > time.time() or any(
                         other.id != node.id
@@ -1348,9 +1397,21 @@ class Gateway:
                             KeyError,
                             TypeError,
                             AttributeError,
-                        ):
+                        ) as error:
+                            detail = (
+                                "预检等待超时"
+                                if isinstance(error, TimeoutError)
+                                else f"预检服务错误 HTTP {error.status}"
+                                if isinstance(error, ProviderError)
+                                else error.message
+                                if isinstance(error, GatewayError)
+                                else "预检返回格式异常"
+                            )
                             async with self.changed:
-                                job.state, job.error = "FAILED", "指定规则预检未确认；未提交真实替换"
+                                job.state, job.error = (
+                                    "FAILED",
+                                    f"指定规则预检未确认（{detail}）；未提交真实替换",
+                                )
                                 self.dynamic.fail(job, safe=True)
                                 await self._persist()
                             return

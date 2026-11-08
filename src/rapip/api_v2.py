@@ -230,6 +230,7 @@ def register(app, gateway, auth, operate):
         page: int = Query(1, ge=1, le=100000),
         page_size: int = Query(12, ge=1, le=50),
         event_view: bool = False,
+        locate: bool = False,
         order: Literal["asc", "desc"] = "desc",
     ):
         cutoff = time.time() - g.observer.retention.trace_days * 86400
@@ -260,9 +261,10 @@ def register(app, gateway, auth, operate):
                         "state": node.state,
                         "group_id": node.group_id,
                         "country": node.country,
+                        "replacement_error": node.replacement_error,
                     }
                 paths.append({"slot_id": sid, "current": current, "changes": by_slot.get(sid, [])})
-        rows, total = await g.storage.chains(
+        result = await g.storage.chains(
             view,
             dict(
                 group_id=group_id,
@@ -279,7 +281,15 @@ def register(app, gateway, auth, operate):
             cutoff,
             timeline=event_view,
             ascending=order == "asc",
+            locate_ip=ip if event_view and locate else "",
         )
+        if event_view:
+            rows, total, anchor = result
+            if anchor:
+                page = anchor["page"]
+        else:
+            rows, total = result
+            anchor = None
         current = {
             g.lifecycle.key(b.id, b.generation): (
                 "RESERVED" if b.reserved else "CURRENT" if not b.unavailable else "UNAVAILABLE"
@@ -355,6 +365,8 @@ def register(app, gateway, auth, operate):
         )
         return {
             "paths": paths,
+            "anchor": anchor,
+            "location_checked": event_view and locate,
             "focus": focus,
             "items": items,
             "total": total,

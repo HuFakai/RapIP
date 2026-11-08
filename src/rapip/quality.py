@@ -218,6 +218,8 @@ class QualityManager:
         )
 
     def eligible(self, node):
+        if node.replacement_error:
+            return False
         group = self.groups.get(node.group_id)
         if not group or not group["enabled"]:
             return False
@@ -282,6 +284,7 @@ class QualityManager:
                 not node
                 or node.state not in {IPState.FRESH, IPState.QUARANTINED}
                 or node.used
+                or node.replacement_error
                 or (node.binding_id and not allow_reserved)
             ):
                 raise GatewayError("MEMBER_BUSY", "只能选择未使用、无绑定和无在途替换的资源")
@@ -636,6 +639,7 @@ class QualityManager:
                         if n.group_id == group_id
                         and n.state in {IPState.FRESH, IPState.QUARANTINED}
                         and not n.used
+                        and not n.replacement_error
                         and n.id not in self.busy
                         and n.id not in self.g.probing
                     ][:100]
@@ -689,6 +693,7 @@ class QualityManager:
                         preview
                         or not valid
                         or node.used
+                        or node.replacement_error
                         or node.state not in {IPState.FRESH, IPState.QUARANTINED}
                     ):
                         continue
@@ -832,6 +837,7 @@ class QualityManager:
                 for n in self.g.nodes.values()
                 if n.group_id == group["id"]
                 and not n.used
+                and not n.replacement_error
                 and n.state in {IPState.FRESH, IPState.QUARANTINED}
                 and n.id not in self.busy
                 and (not self.eligible(n))

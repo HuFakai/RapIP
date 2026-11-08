@@ -431,12 +431,18 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                   </td>
                 )}
                 <td>
-                  <Status state={n.state} />
-                  {n.state === "QUARANTINED" && (
+                  <Status
+                    state={
+                      n.replacement_error ? "REPLACEMENT_BLOCKED" : n.state
+                    }
+                  />
+                  {(n.state === "QUARANTINED" || n.replacement_error) && (
                     <small className="node-quality-hint" title={n.reason}>
-                      {n.quality.state === "UNKNOWN"
-                        ? "未确认可用，等待复检"
-                        : n.reason}
+                      {n.replacement_error
+                        ? `补货已停止：${n.replacement_error}`
+                        : n.quality.state === "UNKNOWN"
+                          ? "未确认可用，等待复检"
+                          : n.reason}
                     </small>
                   )}
                 </td>
