@@ -23,10 +23,11 @@ const states: Record<string, string> = {
   RECONCILING: "列表对账中",
   SUBMITTING: "提交中",
   UNCERTAIN: "结果待核对",
-  BUDGET_BLOCKED: "预算 / 策略阻塞",
+  BUDGET_BLOCKED: "预算 / 策略暂停",
 };
 const causes: Record<string, string> = {
   scheduled: "定时轮换补货",
+  client_session: "新 session 切换补货",
   manual_supplier: "手动替换",
   manual: "主动切换补货",
   quality: "质量拒绝",
@@ -222,7 +223,7 @@ export function Tasks() {
                   </td>
                   <td>
                     <span
-                      className={`ops-status tone-${t.state === "COMPLETED" ? "good" : t.state === "FAILED" || t.state === "UNCERTAIN" ? "bad" : "neutral"}`}
+                      className={`ops-status tone-${t.state === "COMPLETED" ? "good" : t.state === "BUDGET_BLOCKED" ? "warn" : t.state === "FAILED" || t.state === "UNCERTAIN" ? "bad" : "neutral"}`}
                     >
                       {states[t.state] ?? t.state}
                     </span>
@@ -231,6 +232,11 @@ export function Tasks() {
                     <Time value={t.created_at} />
                   </td>
                   <td className="ops-result-cell">
+                    {t.state === "BUDGET_BLOCKED" && (
+                      <a className="ops-link" href={`#groups?id=${t.group_id}`}>
+                        查看分组额度 ·{" "}
+                      </a>
+                    )}
                     {t.error ??
                       (t.state === "COMPLETED" ? "已完成" : "处理中，自动刷新")}
                   </td>

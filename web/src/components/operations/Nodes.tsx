@@ -455,16 +455,41 @@ export function Nodes({ notify }: { notify: (v: string) => void }) {
                   </small>
                 </td>
                 {has("group") && (
-                  <td>
+                  <td className="node-resource-group">
                     <GroupLabel id={n.group_id} />
                   </td>
                 )}
                 <td>
                   <Status
                     state={
-                      n.replacement_error ? "REPLACEMENT_BLOCKED" : n.state
+                      n.replacement_status?.state === "BUDGET_BLOCKED"
+                        ? "BUDGET_BLOCKED"
+                        : n.replacement_status?.state === "QUEUED" &&
+                            n.replacement_status.preflight_attempts > 0 &&
+                            n.replacement_status.error
+                          ? "PREFLIGHT_RETRY"
+                          : n.replacement_error
+                            ? "REPLACEMENT_BLOCKED"
+                            : n.state
                     }
                   />
+                  {n.replacement_status?.state === "BUDGET_BLOCKED" && (
+                    <small
+                      className="node-quality-hint node-budget-hint"
+                      title={n.replacement_status.error}
+                    >
+                      <span>{n.replacement_status.error?.split("；")[0]}</span>
+                      <a className="ops-link" href={`#groups?id=${n.group_id}`}>
+                        查看分组额度
+                      </a>
+                    </small>
+                  )}
+                  {n.replacement_status?.state === "QUEUED" &&
+                    n.replacement_status.error && (
+                      <small className="node-quality-hint">
+                        {n.replacement_status.error}
+                      </small>
+                    )}
                   {(n.state === "QUARANTINED" || n.replacement_error) && (
                     <small className="node-quality-hint" title={n.reason}>
                       {n.replacement_error

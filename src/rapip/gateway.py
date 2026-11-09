@@ -247,7 +247,7 @@ class Gateway:
         for group in self.quality.groups:
             self.workers.remember_capacity(group)
         return {
-            "schema": 5,
+            "schema": 6,
             "lifecycle_related": self.lifecycle.related,
             "lifecycle_keys": self.lifecycle.keys,
             "lifecycle_initialized": self.lifecycle.initialized,
@@ -612,6 +612,35 @@ class Gateway:
         if reservation_id:
             self.rotation.check_reservation(reservation_id, binding)
         old = self.nodes.get(binding.node_id)
+        # No await between reservation and commit: concurrent sessions cannot consume
+        # the spare pool without funding the old exit's refill first.
+        if old and old.used and not reservation_id:
+            superseded = [
+                r
+                for r in self.rotation.requests.values()
+                if r["node_id"] == old.id and r["state"] == "WAITING"
+            ]
+            for request in superseded:
+                self.rotation.ledger[request["reservation_id"]]["state"] = "CANCELLED"
+            try:
+                reservation_id = self.rotation.reserve(old, source, binding.id)
+            except GatewayError as error:
+                for request in superseded:
+                    self.rotation.ledger[request["reservation_id"]]["state"] = "RESERVED"
+                self.lifecycle.add(
+                    "request_failed",
+                    node=old,
+                    binding=binding,
+                    session=session,
+                    chain_id=request_chain,
+                    reason=error.message,
+                    source=source,
+                    status="FAILED",
+                )
+                await self._persist()
+                raise
+            for request in superseded:
+                request.update(state="CANCELLED", error="绑定即将切换；原手动等待任务已取消")
         if session != binding.session:
             self.retired_details[f"{binding.slot}:{binding.session}"] = {
                 "at": time.time(),
@@ -1345,19 +1374,20 @@ class Gateway:
             try:
                 if job.state == "QUEUED":
                     account, counts = self.accounts[job.account_id], self.counters[job.account_id]
-                    if (
-                        account.replacement_budget is not None
-                        and counts["submitted"]
-                        + len(self.rotation.pending(account=job.account_id, exclude=job.reservation_id))
-                        >= account.replacement_budget
-                    ):
-                        async with self.changed:
-                            job.state, job.error = "BUDGET_BLOCKED", "本地替换预算已用尽"
+                    async with self.changed:
+                        try:
+                            self.rotation.check_job(job)
+                            if not job.reservation_id:
+                                job.reservation_id = self.rotation.reserve(node, job.cause, job=job)
+                                self.rotation.ledger[job.reservation_id]["committed"] = True
+                            await self._persist()
+                        except GatewayError as error:
+                            job.state, job.error = "BUDGET_BLOCKED", error.message
                             if in_place:
                                 job.state = "FAILED"
                                 self.dynamic.fail(job, safe=True)
                             await self._persist()
-                        return
+                            return
                     rows = await provider.list_nodes()
                     if node.ip not in {row["proxy_address"] for row in rows}:
                         if node.group_id != "default" or in_place:
@@ -1371,6 +1401,7 @@ class Gateway:
                             return
                         async with self.changed:
                             job.state, node.state = "COMPLETED", IPState.ARCHIVED
+                            self.rotation.ledger[job.reservation_id]["state"] = "CANCELLED"
                             job.reason = "旧 IP 已从供应商列表移除；未提交替换，补货归属未知"
                             ids = self._ingest(job.account_id, rows)
                             await self._persist()
@@ -1387,8 +1418,24 @@ class Gateway:
                             await self._persist()
                         return
                     if job.fallback_enabled is not None and job.selection and job.selection["type"] != "any":
+                        if job.preflight_attempts >= 3:
+                            async with self.changed:
+                                job.state, job.error = (
+                                    "FAILED",
+                                    "预检已达到 3 次上限；未提交真实替换，请手动核对",
+                                )
+                                self.dynamic.fail(job, safe=True)
+                                await self._persist()
+                            return
+
+                        async def save_preflight():
+                            async with self.changed:
+                                await self._persist()
+
                         try:
-                            ready = await preflight(provider, node.ip, job.selection)
+                            job.preflight_attempts += 1
+                            await save_preflight()
+                            ready = await preflight(provider, node.ip, job.selection, job, save_preflight)
                         except (
                             GatewayError,
                             ProviderError,
@@ -1408,11 +1455,25 @@ class Gateway:
                                 else "预检返回格式异常"
                             )
                             async with self.changed:
-                                job.state, job.error = (
-                                    "FAILED",
-                                    f"指定规则预检未确认（{detail}）；未提交真实替换",
+                                retryable = (
+                                    isinstance(error, TimeoutError)
+                                    or isinstance(error, ProviderError)
+                                    and (error.status == 0 or error.status == 429 or error.status >= 500)
+                                    or isinstance(error, GatewayError)
+                                    and bool(job.preflight_id)
                                 )
-                                self.dynamic.fail(job, safe=True)
+                                retry = retryable and job.preflight_attempts < 3
+                                job.state = "QUEUED" if retry else "FAILED"
+                                job.retry_at = (
+                                    time.time() + (5 if job.preflight_attempts == 1 else 15) if retry else 0
+                                )
+                                job.error = f"指定规则预检未确认（{detail}）；未提交真实替换" + (
+                                    f"；等待预检重试 {job.preflight_attempts + 1}/3"
+                                    if retry
+                                    else "；预检已停止"
+                                )
+                                if not retry:
+                                    self.dynamic.fail(job, safe=True)
                                 await self._persist()
                             return
                         if not ready:
@@ -1427,31 +1488,10 @@ class Gateway:
                                 await self._persist()
                     async with self.changed:
                         self._writable()
-                        if (
-                            account.replacement_budget is not None
-                            and counts["submitted"]
-                            + len(self.rotation.pending(account=job.account_id, exclude=job.reservation_id))
-                            >= account.replacement_budget
-                        ):
-                            job.state, job.error = "BUDGET_BLOCKED", "账号本地预算已用尽"
-                            if in_place:
-                                job.state = "FAILED"
-                                self.dynamic.fail(job, safe=True)
-                            await self._persist()
-                            return
-                        if job.reservation_id:
-                            try:
-                                self.rotation.check_reservation(job.reservation_id)
-                            except GatewayError as error:
-                                job.state, job.error = "BUDGET_BLOCKED", error.message
-                                if in_place:
-                                    job.state = "FAILED"
-                                    self.dynamic.fail(job, safe=True)
-                                await self._persist()
-                                return
-                        reason = self.quality.budget_reason(node, job, reservation_id=job.reservation_id)
-                        if reason:
-                            job.state, job.error = "BUDGET_BLOCKED", reason
+                        try:
+                            self.rotation.check_job(job)
+                        except GatewayError as error:
+                            job.state, job.error = "BUDGET_BLOCKED", error.message
                             if in_place:
                                 job.state = "FAILED"
                                 self.dynamic.fail(job, safe=True)
@@ -1460,6 +1500,7 @@ class Gateway:
                         self.quality.debit(node, job)
                         job.before_ips = [row["proxy_address"] for row in rows]
                         job.state, job.attempts = "SUBMITTING", job.attempts + 1
+                        job.error, job.retry_at = None, 0
                         counts["submitted"] += 1
                         self.rotation.submitted(job)
                         await self._persist()
@@ -1763,7 +1804,13 @@ class Gateway:
             "probe_enabled": self.config.probe_enabled,
             "at": time.time(),
             "replacement_pending": sum(
-                j.state not in {"COMPLETED", "FAILED"}
+                j.state not in {"COMPLETED", "FAILED", "CANCELLED"}
+                and (not account_id or j.account_id == account_id)
+                and (not group_id or j.group_id == group_id)
+                for j in self.replacements.values()
+            ),
+            "budget_blocked_count": sum(
+                j.state == "BUDGET_BLOCKED"
                 and (not account_id or j.account_id == account_id)
                 and (not group_id or j.group_id == group_id)
                 for j in self.replacements.values()

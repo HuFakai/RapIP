@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 
 import httpx
 import pytest
@@ -30,6 +31,13 @@ class FakeProvider:
 
     async def list_nodes(self):
         return [dict(row) for row in self.rows]
+
+    async def usage(self):
+        return {
+            "checked_at": time.time(),
+            "plan_id": "fake-plan",
+            "replacement": {"remaining": 100 - self.calls, "total": 100, "used": self.calls},
+        }
 
     async def replace(self, ip, country):
         from rapip.provider import ProviderError

@@ -160,6 +160,7 @@ async def test_zero_budget_never_means_unlimited(gateway, remaining, daily, tota
 
 
 async def test_unknown_supplier_balance_blocks_scheduled_replacement(gateway):
+    gateway.supplier_usage.clear()
     await gateway.rotation.save("default", RotationPolicy(enabled=True, daily_limit=3, total_limit=3))
     binding, node, _ = await gateway.acquire(route())
     gateway.rotation.connected(binding)
@@ -370,7 +371,10 @@ async def test_changing_session_cancels_waiting_manual_identity(gateway):
     await gateway.acquire(route(session="next"))
     await gateway.rotation.tick()
     request = gateway.rotation.requests[result["request_ids"][0]]
-    assert request["state"] == "CANCELLED" and not gateway.rotation.pending()
+    assert request["state"] == "CANCELLED"
+    assert gateway.rotation.ledger[request["reservation_id"]]["state"] == "CANCELLED"
+    refill = next(iter(gateway.replacements.values()))
+    assert [r["id"] for r in gateway.rotation.pending()] == [refill.reservation_id]
     assert binding.session == "next"
 
 

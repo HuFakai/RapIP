@@ -149,6 +149,8 @@ class Replacement:
     preferred_selection: dict | None = None
     fallback_reason: str = ""
     failed_provider_id: str = ""
+    preflight_id: str = ""
+    preflight_attempts: int = 0
 
 
 @dataclass

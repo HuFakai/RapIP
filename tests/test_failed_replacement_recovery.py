@@ -11,7 +11,8 @@ async def test_failed_preflight_releases_fake_replacing_state_without_reusing_ol
         raise TimeoutError()
 
     monkeypatch.setattr(gateway.test_provider, "replace_selected", timeout, raising=False)
-    await gateway.process_replacement(job.id)
+    for _ in range(3):
+        await gateway.process_replacement(job.id)
     assert job.state == "FAILED" and job.attempts == 0
     assert old.state == IPState.QUARANTINED and old.replacement_error
     assert "超时" in old.replacement_error

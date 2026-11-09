@@ -95,10 +95,17 @@ def common_stock(snapshots):
     return result
 
 
-async def preflight(provider, ip, selection):
+async def preflight(provider, ip, selection, job=None, save=None):
     """Only an explicit supplier stock rejection authorizes random fallback."""
     async with asyncio.timeout(15):
-        data = await provider.replace_selected(ip, selection, dry_run=True)
+        if job and job.preflight_id:
+            data = await provider.replacement(job.preflight_id)
+        else:
+            data = await provider.replace_selected(ip, selection, dry_run=True)
+            if job and data.get("id"):
+                job.preflight_id = str(data["id"])
+                if save:
+                    await save()
         for _ in range(10):
             if data.get("state") in {"validated", "completed", "failed"}:
                 break

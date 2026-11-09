@@ -132,7 +132,7 @@ export function Overview({
     {
       name: "补货任务",
       value: s?.replacement_pending,
-      detail: `质量合格 ${d?.quality.PASS ?? 0} · 待检 ${d?.quality.PENDING ?? 0}`,
+      detail: `预算暂停 ${s?.budget_blocked_count ?? 0} · 其他待处理 ${Math.max(0, (s?.replacement_pending ?? 0) - (s?.budget_blocked_count ?? 0))}`,
       icon: Database,
       page: "tasks",
       filters: {},

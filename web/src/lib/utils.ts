@@ -51,7 +51,7 @@ export const labels: Record<string, string> = {
   quality_preview: "只读质量预览",
   bound_quality_refresh: "绑定 IP 质量复检",
   quality_check: "质量筛查准入",
-  quality_round: "新筛选轮次",
+  quality_round: "重新授权总额度",
   ipquality_report: "IPQuality 质量报告",
   read_only_probe: "单节点只读探测",
 
@@ -72,7 +72,7 @@ export const labels: Record<string, string> = {
   PROCESSING: "上游处理中",
   RECONCILING: "核对中",
   UNCERTAIN: "待人工核对",
-  BUDGET_BLOCKED: "预算不足",
+  BUDGET_BLOCKED: "预算暂停",
   SUBMITTING: "提交中",
   healthy: "正常",
   pending: "待同步",

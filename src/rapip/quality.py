@@ -875,14 +875,14 @@ class QualityManager:
             sum(x["day"] == day for x in self.ledger) + sum(r["group_id"] != "default" for r in pending)
             >= self.global_daily_limit
         ):
-            return "全局每日替换预算已用尽"
+            return f"全局每日替换预算已用尽（已提交 {sum(x['day'] == day for x in self.ledger)} / {self.global_daily_limit}，另有预留 {sum(r['group_id'] != 'default' for r in pending)}）"
         if sum(x["day"] == day for x in history) + len(group_pending) >= group["daily_limit"]:
-            return "分组每日替换预算已用尽"
+            return f"分组每日替换预算已用尽（已提交 {sum(x['day'] == day for x in history)} / {group['daily_limit']}，另有预留 {len(group_pending)}）"
         if (
             sum(x["round_id"] == group["round_id"] for x in history) + len(group_pending)
             >= group["round_limit"]
         ):
-            return "本轮替换预算已用尽"
+            return f"本次授权总额度已用尽（跨日累计 {sum(x['round_id'] == group['round_id'] for x in history)} / {group['round_limit']}，另有预留 {len(group_pending)}）；请调整本组总上限"
         if slot["streak"] >= group["slot_limit"]:
             return "该席位连续替换上限，需检查策略或资源来源"
         if time.time() - slot["last_submit"] < group["cooldown_seconds"]:
@@ -921,14 +921,7 @@ class QualityManager:
     async def due(self):
         # Revisit blocked jobs without dropping uncertainty or bypassing account ordering.
         async with self.g.changed:
-            changed = False
-            for job in self.g.replacements.values():
-                if job.state == "BUDGET_BLOCKED" and job.group_id != "default":
-                    node = self.g.nodes[job.node_id]
-                    if not self.budget_reason(node, job):
-                        job.state, job.error = "QUEUED", None
-                        changed = True
-            if changed:
+            if self.g.rotation.resume_blocked():
                 await self.g._persist()
         # Refresh retained exits without running the pool admission / replacement path.
         if self.g.config.probe_enabled:

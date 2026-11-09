@@ -183,7 +183,7 @@ class RotationManager:
             and (not group or r["group_id"] == group)
         ]
 
-    def budget(self, node, exclude=""):
+    def budget(self, node, exclude="", job=None):
         g = self.g
         account = g.accounts[node.account_id]
         if not account.enabled:
@@ -193,7 +193,10 @@ class RotationManager:
             account.replacement_budget is not None
             and g.counters[node.account_id]["submitted"] + reserved >= account.replacement_budget
         ):
-            raise GatewayError("BUDGET_BLOCKED", "账号本地预算不足（含已预留任务）")
+            raise GatewayError(
+                "BUDGET_BLOCKED",
+                f"账号本地预算不足（已提交 {g.counters[node.account_id]['submitted']} / {account.replacement_budget}，另有预留 {reserved}）",
+            )
         usage = public_usage(g.supplier_usage.get(node.account_id))
         remaining = usage.get("replacement", {}).get("remaining")
         if usage.get("stale") or remaining is None:
@@ -206,13 +209,16 @@ class RotationManager:
             for r in self.ledger.values()
         )
         if remaining <= reserved + unsettled:
-            raise GatewayError("BUDGET_BLOCKED", "供应商剩余额度不足（含本地预留及未反映提交）")
-        reason = g.quality.budget_reason(node, reservation_id=exclude)
+            raise GatewayError(
+                "BUDGET_BLOCKED",
+                f"供应商剩余额度不足（剩余 {remaining}，预留 {reserved}，待结算 {unsettled}）；请同步或检查套餐",
+            )
+        reason = g.quality.budget_reason(node, job, reservation_id=exclude)
         if reason:
             raise GatewayError("BUDGET_BLOCKED", reason)
 
-    def reserve(self, node, kind, binding_id=""):
-        self.budget(node)
+    def reserve(self, node, kind, binding_id="", job=None):
+        self.budget(node, job=job)
         if any(r["node_id"] == node.id for r in self.pending()):
             raise GatewayError("NODE_BUSY", "该出口已有预留替换任务")
         policy = self.policy(node.group_id)
@@ -248,6 +254,30 @@ class RotationManager:
             raise GatewayError("VERSION_CONFLICT", "轮换预留已变化或计划已关闭")
         self.budget(self.g.nodes[record["node_id"]], exclude=rid)
 
+    def check_job(self, job):
+        """All submission and wake-up paths share the same complete guard."""
+        if job.reservation_id:
+            record = self.ledger.get(job.reservation_id)
+            if not record or record["state"] != "RESERVED" or record["node_id"] != job.node_id:
+                raise GatewayError("VERSION_CONFLICT", "补货预留已变化，请核对任务")
+        self.budget(self.g.nodes[job.node_id], exclude=job.reservation_id, job=job)
+
+    def resume_blocked(self):
+        changed = False
+        for job in self.g.replacements.values():
+            if job.state != "BUDGET_BLOCKED":
+                continue
+            try:
+                self.check_job(job)
+            except GatewayError as error:
+                if job.error != error.message:
+                    job.error = error.message
+                    changed = True
+            else:
+                job.state, job.error = "QUEUED", None
+                changed = True
+        return changed
+
     def bind_reservation(self, rid, node):
         for job in self.g.replacements.values():
             if job.node_id == node.id and job.state == "QUEUED":
@@ -281,13 +311,8 @@ class RotationManager:
     async def tick(self):
         g = self.g
         # One rotation per tick provides staggering; a pending refill for the group blocks the next.
-        for job in g.replacements.values():
-            if job.state == "BUDGET_BLOCKED" and job.reservation_id:
-                try:
-                    self.check_reservation(job.reservation_id)
-                    job.state, job.error = "QUEUED", None
-                except GatewayError:
-                    pass
+        if self.resume_blocked():
+            await g._persist()
         for binding in sorted(g.bindings.values(), key=lambda b: b.rotation.get("next_at") or float("inf")):
             policy = self.policy(binding.group_id)
             if (

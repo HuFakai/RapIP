@@ -169,6 +169,14 @@ export interface Paged<T> {
 }
 export interface NodeData {
   replacement_error?: string;
+  replacement_status?: {
+    id: string;
+    state: string;
+    error?: string;
+    attempts: number;
+    retry_at: number;
+    preflight_attempts: number;
+  } | null;
   binding_id?: string | null;
   group_id: string;
   slot_id: string;
@@ -242,6 +250,7 @@ export interface Stats {
   at: number;
   started_at: number;
   replacement_pending: number;
+  budget_blocked_count: number;
   countries: Record<string, { total: number; fresh: number; in_use: number }>;
 }
 export interface AccountData {

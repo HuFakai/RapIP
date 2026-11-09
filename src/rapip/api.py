@@ -197,7 +197,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 await gateway.stop()
 
     app = FastAPI(
-        title="RapIP", version="0.2.15", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="RapIP", version="0.2.16", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.gateway = gateway
 
@@ -400,11 +400,30 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 or (not network and q.lower() in f"{n.ip} {n.account_id} {n.id}".lower())
             )
         ]
+        latest_jobs = {}
+        for job in gateway.replacements.values():
+            if job.node_id not in latest_jobs or job.created_at > latest_jobs[job.node_id].created_at:
+                latest_jobs[job.node_id] = job
         for row in rows:
             row["connections"] = gateway._count_node(row["id"])
+            latest = latest_jobs.get(row["id"])
+            row["replacement_status"] = (
+                {
+                    "id": latest.id,
+                    "state": latest.state,
+                    "error": latest.error,
+                    "attempts": latest.attempts,
+                    "retry_at": latest.retry_at,
+                    "preflight_attempts": latest.preflight_attempts,
+                }
+                if latest
+                else None
+            )
             row["worker"] = (
                 gateway.bindings[row["binding_id"]].worker
                 if row.get("binding_id") in gateway.bindings
+                and not gateway.bindings[row["binding_id"]].released
+                and gateway.bindings[row["binding_id"]].node_id == row["id"]
                 else None
             )
             node = gateway.nodes[row["id"]]
@@ -716,7 +735,7 @@ def create_app(config: Config | None = None, gateway: Gateway | None = None, lif
                 "tunnel_idle_timeout": 0,
                 "session_expires": False,
                 "fault_failover": "由质量组决定，默认关闭",
-                "version": "0.2.15",
+                "version": "0.2.16",
             },
         }
 

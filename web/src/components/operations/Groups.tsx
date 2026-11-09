@@ -3,7 +3,7 @@ import { ReplenishmentDialog } from "./ReplenishmentDialog";
 import { ReportMethods } from "./ReportMethods";
 import { LoadingState, TableLoading } from "../ui/loading";
 import { RotationDialog } from "./RotationDialog";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Check,
   ChevronRight,
@@ -281,6 +281,16 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
     [busy, setBusy] = useState(""),
     [remove, setRemove] = useState<Group | null>(null),
     [checking, setChecking] = useState<Record<string, unknown> | null>(null);
+  const initialGroup = useRef(
+    new URLSearchParams(location.hash.split("?")[1]).get("id"),
+  );
+  useEffect(() => {
+    const found = query.data?.items.find((g) => g.id === initialGroup.current);
+    if (found) {
+      setDetail(found);
+      initialGroup.current = null;
+    }
+  }, [query.data]);
   const [step, setStep] = useState(0),
     [name, setName] = useState(""),
     [id, setID] = useState(""),
@@ -542,7 +552,7 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                       <>
                         {g.today_submitted} / {g.daily_limit}
                         <small>
-                          本轮 {g.round_submitted} / {g.round_limit}
+                          本次授权 {g.round_submitted} / {g.round_limit}
                         </small>
                       </>
                     )}
@@ -935,7 +945,11 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                     />
                   </label>
                   <label>
-                    本轮替换上限
+                    本次授权总上限（跨日累计）
+                    <small className="field-help">
+                      累计所有换号原因；跨天、重启、普通保存均不清零。0
+                      表示暂停。
+                    </small>
                     <input
                       type="number"
                       min={0}
@@ -1086,14 +1100,20 @@ export function Groups({ notify }: { notify: (v: string) => void }) {
                   size="sm"
                   disabled={!!busy}
                   onClick={() => {
+                    if (
+                      !window.confirm(
+                        `重新授权后，本次总额度会重新从 0 计数，最多再允许 ${current.round_limit} 次。每日额度、账号额度与连续限制保留。只追加少量额度时，请编辑总上限。确认重新授权？`,
+                      )
+                    )
+                      return;
                     void execute(
                       "round",
                       () => operation(`/groups/${current.id}/round`),
-                      "已开启新轮次，每日与连续限制保留",
+                      "已重新授权总额度，每日与连续限制保留",
                     ).catch(() => {});
                   }}
                 >
-                  新筛选轮次
+                  重新授权总额度
                 </Button>
               </div>
             )}

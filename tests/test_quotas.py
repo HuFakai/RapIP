@@ -162,6 +162,7 @@ async def test_usage_sync_is_cached_persisted_and_failure_does_not_block_nodes(g
 async def test_usage_result_rejected_if_account_changes_while_loading(gateway, monkeypatch):
     from dataclasses import replace
 
+    gateway.supplier_usage.clear()
     began, finish = asyncio.Event(), asyncio.Event()
 
     async def usage():
